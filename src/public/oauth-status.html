@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OAuth Status - SAP MCP Server</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 2rem;
+            color: #333;
+        }
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            padding: 2rem;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 2rem;
+            padding-bottom: 1rem;
+            border-bottom: 2px solid #e9ecef;
+        }
+        .status-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 2rem;
+            margin-bottom: 2rem;
+        }
+        .status-card {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 1.5rem;
+            border-left: 4px solid #007bff;
+        }
+        .status-card.success { border-left-color: #28a745; }
+        .status-card.warning { border-left-color: #ffc107; }
+        .status-card.error { border-left-color: #dc3545; }
+        .status-card h3 {
+            color: #2c3e50;
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .btn {
+            display: inline-block;
+            padding: 0.75rem 1.5rem;
+            margin: 0.5rem;
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 500;
+            text-decoration: none;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        .btn-primary { background: #007bff; color: white; }
+        .btn-success { background: #28a745; color: white; }
+        .btn-secondary { background: #6c757d; color: white; }
+        .btn-copy { background: #17a2b8; color: white; }
+        .btn:hover { transform: translateY(-2px); opacity: 0.9; }
+        .token-section { background: #fff3cd; border: 1px solid #ffeaa7; border-radius: 10px; padding: 1.5rem; margin: 1rem 0; }
+        .token-status.valid { color: #28a745; font-weight: bold; }
+        .token-status.invalid { color: #dc3545; font-weight: bold; }
+        .code-block {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 5px;
+            padding: 0.75rem;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 0.875rem;
+            margin: 0.5rem 0;
+            overflow-x: auto;
+        }
+        .instructions-section {
+            background: #e3f2fd;
+            border-radius: 10px;
+            padding: 1.5rem;
+            margin: 2rem 0;
+        }
+        .instructions-section h3 { color: #1976d2; margin-bottom: 1rem; }
+        .instructions-section ol { margin-left: 1.5rem; }
+        .instructions-section li { margin-bottom: 0.5rem; line-height: 1.6; }
+        .endpoint-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1rem; }
+        .endpoint { background: white; border: 1px solid #dee2e6; border-radius: 5px; padding: 1rem; }
+        .endpoint strong { color: #495057; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔐 OAuth Status Dashboard</h1>
+            <p>SAP BTP XSUAA Authentication for MCP Server</p>
+        </div>
+        
+        <div class="status-grid">
+            <div class="status-card {{oauth_configured_class}}">
+                <h3>{{oauth_configured_icon}} OAuth Configuration</h3>
+                <p>{{oauth_configured_message}}</p>
+            </div>
+            
+            <div class="status-card {{auth_status_class}}">
+                <h3>🔑 Authentication Status</h3>
+                <p><strong>Status:</strong> {{auth_current_status}}</p>
+                <p><strong>Required:</strong> {{auth_required}}</p>
+                {{auth_button}}
+            </div>
+            
+            <div class="status-card {{integration_ready_class}}">
+                <h3>🔗 MCP Integration</h3>
+                <p><strong>Ready:</strong> {{integration_ready}}</p>
+                <p><strong>Server:</strong> {{server_url}}</p>
+                <p><strong>Auth:</strong> {{auth_method}}</p>
+            </div>
+        </div>
+        
+        {{token_display}}
+        
+        <div class="instructions-section">
+            <h3>📋 MCP Client Setup Instructions</h3>
+            {{connection_instructions}}
+        </div>
+        
+        <div class="status-card">
+            <h3>🔗 Available Endpoints</h3>
+            <div class="endpoint-list">
+                {{endpoints}}
+            </div>
+        </div>
+        
+        <div style="text-align: center; margin-top: 2rem; padding-top: 1rem; border-top: 1px solid #dee2e6;">
+            <button onclick="refreshPage()" class="btn btn-secondary">🔄 Refresh Status</button>
+            <button onclick="copyStatusJson()" class="btn btn-copy">📋 Copy JSON Status</button>
+            <a href="{{base_url}}/docs" class="btn btn-secondary">📚 API Documentation</a>
+        </div>
+    </div>
+    
+    <script>
+        function copyToken(token) {
+            navigator.clipboard.writeText(token).then(() => {
+                showMessage('Token copied to clipboard!', 'success');
+            });
+        }
+        
+        function refreshPage() {
+            window.location.reload();
+        }
+        
+        function copyStatusJson() {
+            fetch('{{base_url}}/oauth/status?format=json')
+                .then(response => response.json())
+                .then(data => {
+                    navigator.clipboard.writeText(JSON.stringify(data, null, 2));
+                    showMessage('JSON status copied to clipboard!', 'success');
+                })
+                .catch(error => showMessage('Failed to copy JSON status', 'error'));
+        }
+        
+        function showMessage(message, type) {
+            const alertDiv = document.createElement('div');
+            alertDiv.style.cssText = `
+                position: fixed; top: 20px; right: 20px; z-index: 1000;
+                padding: 1rem; border-radius: 5px; font-weight: 500;
+                background: ${type === 'success' ? '#28a745' : '#dc3545'};
+                color: white; box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            `;
+            alertDiv.textContent = message;
+            document.body.appendChild(alertDiv);
+            
+            setTimeout(() => {
+                alertDiv.remove();
+            }, 3000);
+        }
+    </script>
+</body>
+</html>

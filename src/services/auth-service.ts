@@ -37,7 +37,7 @@ export class AuthService {
     /**
      * Generate OAuth authorization URL for user login
      */
-    getAuthorizationUrl(state?: string): string {
+    getAuthorizationUrl(state?: string, requestUrl?: string): string {
         if (!this.xsuaaCredentials) {
             throw new Error('XSUAA service not configured');
         }
@@ -45,7 +45,7 @@ export class AuthService {
         const params = new URLSearchParams({
             response_type: 'code',
             client_id: this.xsuaaCredentials.clientid,
-            redirect_uri: this.getRedirectUri(),
+            redirect_uri: this.getRedirectUri(requestUrl),
             ...(state && { state })
         });
 
@@ -59,7 +59,8 @@ export class AuthService {
         if (!this.xsuaaCredentials) {
             throw new Error('XSUAA service not configured');
         }
-
+        console.log('Redirect URI 1:', redirectUri);
+        console.log('Redirect URI 2:', this.getRedirectUri());
         const tokenUrl = `${this.xsuaaCredentials.url}/oauth/token`;
         const params = new URLSearchParams({
             grant_type: 'authorization_code',
@@ -297,9 +298,10 @@ export class AuthService {
         };
     }
 
-    getRedirectUri(): string {
+    getRedirectUri(requestUrl?: string): string {
         const port = process.env.PORT || '3000';
-        const baseUrl = this.config.get('oauth.redirectBaseUrl', process.env.OAUTH_REDIRECT_BASE_URL || `http://localhost:${port}`);
+        const defaultBaseUrl = `http://localhost:${port}`;
+        const baseUrl = this.config.get('oauth.redirectBaseUrl', process.env.OAUTH_REDIRECT_BASE_URL || requestUrl || defaultBaseUrl);
         return `${baseUrl}/oauth/callback`;
     }
 

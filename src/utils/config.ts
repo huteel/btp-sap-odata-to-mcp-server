@@ -18,7 +18,7 @@ export class Config {
         this.config.set('node.env', process.env.NODE_ENV || 'development');
         
         // OAuth configuration
-        this.config.set('oauth.redirectBaseUrl', process.env.OAUTH_REDIRECT_BASE_URL || 'http://localhost:3000');
+        // this.config.set('oauth.redirectBaseUrl', process.env.OAUTH_REDIRECT_BASE_URL || 'http://localhost:3000');
         
         // OData service discovery configuration
         this.loadODataServiceConfig();

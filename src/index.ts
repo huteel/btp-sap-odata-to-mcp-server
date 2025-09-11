@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { randomUUID } from 'node:crypto';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
@@ -18,6 +19,64 @@ import { ODataService } from './types/sap-types.js';
 import { ServiceDiscoveryConfigService } from './services/service-discovery-config.js';
 import { AuthService, AuthRequest } from './services/auth-service.js';
 import { OAuthIntegrationService } from './services/oauth-integration.js';
+
+// Helper function to get the correct base URL from request
+function getBaseUrl(req: express.Request): string {
+    const protocol = req.get('x-forwarded-proto') || req.protocol;
+    const host = req.get('host');
+    return `${protocol}://${host}`;
+}
+
+// Helper function to render HTML template with data
+function renderOAuthStatusTemplate(integrationStatus: any, tokenDisplay: string, connectionInstructions: any, baseUrl: string): string {
+    const __filename = fileURLToPath(import.meta.url);
+    const __dirname = path.dirname(__filename);
+    const templatePath = path.join(__dirname, 'public', 'oauth-status.html');
+    let template = fs.readFileSync(templatePath, 'utf8');
+
+    // Replace placeholders with actual data
+    template = template.replace(/{{oauth_configured_class}}/g, integrationStatus.oauth_configured ? 'success' : 'error');
+    template = template.replace(/{{oauth_configured_icon}}/g, integrationStatus.oauth_configured ? '✅' : '❌');
+    template = template.replace(/{{oauth_configured_message}}/g, integrationStatus.oauth_configured ? 'XSUAA service is properly configured' : 'XSUAA service not configured - bind XSUAA service to enable OAuth');
+    
+    template = template.replace(/{{auth_status_class}}/g, integrationStatus.authentication.current_status === 'token_provided' ? 'success' : 'warning');
+    template = template.replace(/{{auth_current_status}}/g, integrationStatus.authentication.current_status);
+    template = template.replace(/{{auth_required}}/g, integrationStatus.authentication.required ? 'Yes' : 'No');
+    template = template.replace(/{{auth_button}}/g, !integrationStatus.authentication.current_status.includes('token') ? '<a href="/oauth/authorize" class="btn btn-primary">🚀 Get Token</a>' : '');
+    
+    template = template.replace(/{{integration_ready_class}}/g, 'integration_ready' in integrationStatus && integrationStatus.integration_ready ? 'success' : 'warning');
+    template = template.replace(/{{integration_ready}}/g, 'integration_ready' in integrationStatus && integrationStatus.integration_ready ? 'Yes' : 'No');
+    template = template.replace(/{{server_url}}/g, integrationStatus.mcp_integration.server_url);
+    template = template.replace(/{{auth_method}}/g, integrationStatus.mcp_integration.authentication_method);
+    
+    template = template.replace(/{{token_display}}/g, tokenDisplay);
+    
+    // Generate connection instructions HTML
+    const instructionsHTML = Object.entries(connectionInstructions).map(([clientKey, clientInfo]: [string, any]) => `
+        <div class="endpoint" style="margin-bottom: 1rem;">
+            <h4>${clientInfo.title}</h4>
+            <p>${clientInfo.description}</p>
+            <ol>
+                ${clientInfo.steps.map((step: string) => `<li>${step}</li>`).join('')}
+            </ol>
+            ${clientInfo.directCommand ? `<div class="code-block">${clientInfo.directCommand}</div>` : ''}
+        </div>
+    `).join('');
+    template = template.replace(/{{connection_instructions}}/g, instructionsHTML);
+    
+    // Generate endpoints HTML
+    const endpointsHTML = Object.entries(integrationStatus.endpoints).map(([key, url]) => `
+        <div class="endpoint">
+            <strong>${key}:</strong><br>
+            <a href="${url}" target="_blank">${url}</a>
+        </div>
+    `).join('');
+    template = template.replace(/{{endpoints}}/g, endpointsHTML);
+    
+    template = template.replace(/{{base_url}}/g, baseUrl);
+    
+    return template;
+}
 
 /**
  * Modern Express server hosting SAP MCP Server with session management
@@ -185,7 +244,7 @@ export function createApp(): express.Application {
     app.get('/mcp', authService.optionalAuthenticateJWT() as express.RequestHandler, (req, res) => {
         const authReq = req as AuthRequest;
         const isAuthenticated = !!authReq.authInfo;
-        const baseUrl = `${req.protocol}://${req.get('host')}`;
+        const baseUrl = getBaseUrl(req);
         // Build authentication-aware response
         const serverInfo: any = {
             name: 'btp-sap-odata-to-mcp-server',
@@ -416,15 +475,15 @@ export function createApp(): express.Application {
 
             const xsuaaMetadata = authService.getXSUAADiscoveryMetadata()!;
             const appScopes = authService.getApplicationScopes();
-            const baseUrl = `${req.protocol}://${req.get('host')}`;
+            const baseUrl = getBaseUrl(req);
             
             const discoveryMetadata = {
                 // Core OAuth 2.0 Authorization Server Metadata
                 issuer: xsuaaMetadata.issuer,
-                // authorization_endpoint: xsuaaMetadata.endpoints.authorization,
-                // token_endpoint: xsuaaMetadata.endpoints.token,
-                authorization_endpoint: "http://localhost:8080/oauth/authorize",//xsuaaMetadata.endpoints.authorization,
-                token_endpoint: "http://localhost:8080/oauth/token",// xsuaaMetadata.endpoints.token,
+                authorization_endpoint: xsuaaMetadata.endpoints.authorization,
+                token_endpoint: xsuaaMetadata.endpoints.token,
+                // authorization_endpoint: "http://localhost:8080/oauth/authorize",//xsuaaMetadata.endpoints.authorization,
+                // token_endpoint: "http://localhost:8080/oauth/token",// xsuaaMetadata.endpoints.token,
                 userinfo_endpoint: xsuaaMetadata.endpoints.userinfo,
                 revocation_endpoint: xsuaaMetadata.endpoints.revocation,
                 introspection_endpoint: xsuaaMetadata.endpoints.introspection,
@@ -530,7 +589,7 @@ export function createApp(): express.Application {
     // Custom OAuth metadata endpoint with MCP-specific information
     app.get('/oauth/.well-known/oauth_metadata', (req, res) => {
         try {
-            const baseUrl = `${req.protocol}://${req.get('host')}`;
+            const baseUrl = getBaseUrl(req);
             const xsuaaInfo = authService.getServiceInfo();
             const appScopes = authService.getApplicationScopes();
             
@@ -637,70 +696,12 @@ export function createApp(): express.Application {
             }
 
             const state = req.query.state as string || randomUUID();
-            const authUrl = authService.getAuthorizationUrl(state);
+            const baseUrl = getBaseUrl(req);
+            const authUrl = authService.getAuthorizationUrl(state, baseUrl);
             res.redirect(authUrl);
         } catch (error) {
             logger.error('Failed to initiate OAuth flow:', error);
             res.status(500).json({ error: 'Failed to initiate OAuth flow' });
-        }
-    });
-
-    // OAuth proxy for MCP Inspector - handles the OAuth flow translation
-    app.get('/oauth/mcp-inspector/authorize', (req, res) => {
-        try {
-            if (!authService.isConfigured()) {
-                return res.status(501).json({
-                    error: 'OAuth not configured',
-                    message: 'XSUAA service is not configured for this deployment'
-                });
-            }
-
-            // Store MCP Inspector's redirect_uri and state for later use
-            const mcpRedirectUri = req.query.redirect_uri as string;
-            const mcpState = req.query.state as string;
-            const mcpCodeChallenge = req.query.code_challenge as string;
-            const mcpCodeChallengeMethod = req.query.code_challenge_method as string;
-            
-            if (!mcpRedirectUri) {
-                return res.status(400).json({ 
-                    error: 'Missing redirect_uri parameter',
-                    message: 'MCP Inspector redirect URI is required'
-                });
-            }
-            
-            // Store MCP Inspector's callback info in session/memory
-            const proxyState = randomUUID();
-            
-            // Store mapping in a simple in-memory store (you might want to use Redis in production)
-            if (!(global as any).mcpProxyStates) {
-                (global as any).mcpProxyStates = new Map();
-            }
-            (global as any).mcpProxyStates.set(proxyState, {
-                mcpRedirectUri,
-                mcpState,
-                mcpCodeChallenge,
-                mcpCodeChallengeMethod,
-                timestamp: Date.now()
-            });
-            
-            // Clean up old states (older than 10 minutes)
-            for (const [key, value] of (global as any).mcpProxyStates.entries()) {
-                if (Date.now() - value.timestamp > 600000) {
-                    (global as any).mcpProxyStates.delete(key);
-                }
-            }
-            
-            logger.info(`MCP Inspector OAuth proxy initiated for redirect: ${mcpRedirectUri}`);
-            
-            // Redirect to our regular OAuth authorize with proxy state
-            const authUrl = authService.getAuthorizationUrl(proxyState);
-            res.redirect(authUrl);
-        } catch (error) {
-            logger.error('MCP Inspector OAuth proxy error:', error);
-            res.status(500).json({
-                error: 'OAuth Proxy Failed',
-                message: error instanceof Error ? error.message : 'Failed to initialize MCP Inspector OAuth proxy'
-            });
         }
     });
 
@@ -750,12 +751,13 @@ export function createApp(): express.Application {
             const mcpProxyStates = (global as any).mcpProxyStates;
             const mcpInfo = state && mcpProxyStates?.get(state);
             
+                    const baseUrl = getBaseUrl(req);
             if (mcpInfo) {
                 // This is an MCP Inspector proxy callback
                 try {
                     // Exchange code for token with XSUAA using our server's redirect URI 
                     // (the same one used in the authorization request)
-                    const tokenResult = await authService.exchangeCodeForToken(code, authService.getRedirectUri());
+                    const tokenResult = await authService.exchangeCodeForToken(code, authService.getRedirectUri(baseUrl));
                     
                     // Clean up the proxy state
                     mcpProxyStates.delete(state);
@@ -792,7 +794,7 @@ export function createApp(): express.Application {
             }
 
             // Regular OAuth callback (not MCP Inspector proxy)
-            const tokenData = await authService.exchangeCodeForToken(code);
+            const tokenData = await authService.exchangeCodeForToken(code,authService.getRedirectUri(baseUrl));
             
             // Determine response format
             if (format === 'json' || acceptHeader.includes('application/json')) {
@@ -805,7 +807,7 @@ export function createApp(): express.Application {
                 });
             } else {
                 // HTML response for browser-based flow (default)
-                const baseUrl = `${req.protocol}://${req.get('host')}`;
+                const baseUrl = getBaseUrl(req);
                 const expiryTime = new Date(Date.now() + tokenData.expiresIn * 1000);
                 
                 res.send(`
@@ -883,219 +885,11 @@ export function createApp(): express.Application {
         res.json(userInfo);
     });
 
-    // MCP Inspector Integration endpoint
-    app.get('/oauth/inspector', async (req, res) => {
-        try {
-            const token = req.query.token as string;
-            const baseUrl = `${req.protocol}://${req.get('host')}`;
-            
-            if (!token) {
-                return res.status(400).send(`
-                    <html><body style="font-family: sans-serif; text-align: center; padding: 2rem;">
-                        <h1>❌ Token Required</h1>
-                        <p>No authentication token provided for MCP Inspector launch.</p>
-                        <a href="/oauth/authorize" style="display: inline-block; padding: 0.5rem 1rem; background: #007bff; color: white; text-decoration: none; border-radius: 4px;">Get Token</a>
-                    </body></html>
-                `);
-            }
-
-            // Validate token first
-            let userInfo = null;
-            try {
-                const response = await fetch(`${baseUrl}/oauth/userinfo`, {
-                    headers: { 'Authorization': `Bearer ${token}` }
-                });
-                if (response.ok) {
-                    userInfo = await response.json();
-                }
-            } catch (error) {
-                logger.debug('Token validation failed for inspector launch:', error);
-            }
-
-            // Generate MCP Inspector launch page
-            res.send(`
-                <!DOCTYPE html>
-                <html lang="en">
-                <head>
-                    <meta charset="UTF-8">
-                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                    <title>Launch MCP Inspector - SAP OData</title>
-                    <style>
-                        body {
-                            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-                            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                            min-height: 100vh;
-                            display: flex;
-                            align-items: center;
-                            justify-content: center;
-                            margin: 0;
-                            color: #333;
-                        }
-                        .container {
-                            background: white;
-                            border-radius: 20px;
-                            padding: 2rem;
-                            max-width: 600px;
-                            width: 90%;
-                            text-align: center;
-                            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
-                        }
-                        .success-icon { font-size: 3rem; color: #28a745; margin-bottom: 1rem; }
-                        h1 { color: #2c3e50; margin-bottom: 1rem; }
-                        .user-info {
-                            background: #f8f9fa;
-                            border-radius: 8px;
-                            padding: 1rem;
-                            margin: 1rem 0;
-                            border-left: 4px solid #007bff;
-                        }
-                        .instructions {
-                            background: #e3f2fd;
-                            border-radius: 8px;
-                            padding: 1.5rem;
-                            margin: 1.5rem 0;
-                            text-align: left;
-                        }
-                        .command-box {
-                            background: #2d3748;
-                            color: #e2e8f0;
-                            padding: 1rem;
-                            border-radius: 8px;
-                            font-family: 'Monaco', monospace;
-                            font-size: 0.9rem;
-                            margin: 1rem 0;
-                            word-break: break-all;
-                        }
-                        .btn {
-                            display: inline-block;
-                            padding: 0.75rem 1.5rem;
-                            margin: 0.5rem;
-                            background: #007bff;
-                            color: white;
-                            text-decoration: none;
-                            border-radius: 8px;
-                            border: none;
-                            cursor: pointer;
-                            font-size: 1rem;
-                            transition: all 0.2s ease;
-                        }
-                        .btn:hover {
-                            background: #0056b3;
-                            transform: translateY(-2px);
-                        }
-                        .btn-copy { background: #28a745; }
-                        .btn-copy:hover { background: #1e7e34; }
-                    </style>
-                </head>
-                <body>
-                    <div class="container">
-                        <div class="success-icon">🚀</div>
-                        <h1>Launch MCP Inspector</h1>
-                        
-                        ${userInfo ? `
-                            <div class="user-info">
-                                <strong>Authenticated as:</strong> ${userInfo.username}<br>
-                                <small>Email: ${userInfo.email || 'Not provided'}</small>
-                            </div>
-                        ` : ''}
-                        
-                        <div class="instructions">
-                            <h3>Option 1: Automatic Launch (Recommended)</h3>
-                            <p>Click the button below to automatically launch MCP Inspector with authentication:</p>
-                            <button onclick="launchInspector()" class="btn">🚀 Launch MCP Inspector Now</button>
-                        </div>
-                        
-                        <div class="instructions">
-                            <h3>Option 2: Manual Setup</h3>
-                            <p>1. Run this command in your terminal:</p>
-                            <div class="command-box" id="inspectorCommand">
-                                npx @modelcontextprotocol/inspector
-                            </div>
-                            <button onclick="copyCommand()" class="btn btn-copy">📋 Copy Command</button>
-                            
-                            <p>2. In MCP Inspector, configure:</p>
-                            <ul style="text-align: left;">
-                                <li><strong>Server URL:</strong> ${baseUrl}/mcp</li>
-                                <li><strong>Header:</strong> Authorization: Bearer [token]</li>
-                            </ul>
-                            
-                            <p>3. Your authentication token:</p>
-                            <div class="command-box" id="authToken" style="font-size: 0.8rem;">
-                                ${token.substring(0, 50)}...
-                            </div>
-                            <button onclick="copyToken()" class="btn btn-copy">📋 Copy Full Token</button>
-                        </div>
-                        
-                        <div class="instructions">
-                            <h3>Option 3: Direct Command Line</h3>
-                            <p>Use this command to launch with pre-configured authentication:</p>
-                            <div class="command-box" id="directCommand">
-                                npx @modelcontextprotocol/inspector "${baseUrl}/mcp" --header "Authorization: Bearer ${token}"
-                            </div>
-                            <button onclick="copyDirectCommand()" class="btn btn-copy">📋 Copy Direct Command</button>
-                        </div>
-                        
-                        <p style="color: #6c757d; font-size: 0.9rem; margin-top: 2rem;">
-                            <strong>Note:</strong> Your token expires in ~1 hour. 
-                            <a href="/oauth/authorize" style="color: #007bff;">Re-authenticate</a> when needed.
-                        </p>
-                    </div>
-                    
-                    <script>
-                        const token = '${token}';
-                        const baseUrl = '${baseUrl}';
-                        
-                        function launchInspector() {
-                            // Try different methods to launch MCP Inspector
-                            
-                            // Method 1: Try to open a custom protocol handler
-                            const mcpUrl = \`mcp://${baseUrl.replace('http://', '').replace('https://', '')}/mcp?auth=\${encodeURIComponent(token)}\`;
-                            window.location.href = mcpUrl;
-                            
-                            // Method 2: Show instructions after a delay
-                            setTimeout(() => {
-                                alert('If MCP Inspector did not launch automatically, please use the manual setup instructions below.');
-                            }, 2000);
-                        }
-                        
-                        function copyCommand() {
-                            navigator.clipboard.writeText('npx @modelcontextprotocol/inspector').then(() => {
-                                alert('📋 Command copied to clipboard!');
-                            });
-                        }
-                        
-                        function copyToken() {
-                            navigator.clipboard.writeText(token).then(() => {
-                                alert('📋 Full token copied to clipboard!');
-                            });
-                        }
-                        
-                        function copyDirectCommand() {
-                            const command = \`npx @modelcontextprotocol/inspector "\${baseUrl}/mcp" --header "Authorization: Bearer \${token}"\`;
-                            navigator.clipboard.writeText(command).then(() => {
-                                alert('📋 Direct command copied to clipboard!');
-                            });
-                        }
-                    </script>
-                </body>
-                </html>
-            `);
-        } catch (error) {
-            logger.error('MCP Inspector launch failed:', error);
-            res.status(500).send(`
-                <html><body style="font-family: sans-serif; text-align: center; padding: 2rem;">
-                    <h1>❌ Launch Failed</h1>
-                    <p>Error preparing MCP Inspector launch: ${error instanceof Error ? error.message : 'Unknown error'}</p>
-                    <a href="/oauth/authorize" style="display: inline-block; padding: 0.5rem 1rem; background: #007bff; color: white; text-decoration: none; border-radius: 4px;">Start Over</a>
-                </body></html>
-            `);
-        }
-    });
-
     // OAuth status and management endpoint
     app.get('/oauth/status', async (req, res) => {
         try {
-            const baseUrl = `${req.protocol}://${req.get('host')}`;
+            const baseUrl = getBaseUrl(req);
+            console.log('Generating OAuth status for baseUrl:', baseUrl);
             const format = req.query.format as string || 'html';
             const token = req.query.token as string || req.headers.authorization?.replace('Bearer ', '');
             
@@ -1131,206 +925,8 @@ export function createApp(): express.Application {
                 const tokenDisplay = token && tokenStatus ? oauthIntegrationService.generateTokenDisplayHTML(token, tokenStatus, baseUrl) : '';
                 const connectionInstructions = 'connection_instructions' in integrationStatus ? integrationStatus.connection_instructions : {};
                 
-                res.send(`
-                    <!DOCTYPE html>
-                    <html lang="en">
-                    <head>
-                        <meta charset="UTF-8">
-                        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                        <title>OAuth Status - SAP MCP Server</title>
-                        <style>
-                            * { margin: 0; padding: 0; box-sizing: border-box; }
-                            body {
-                                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-                                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                                min-height: 100vh;
-                                padding: 2rem;
-                                color: #333;
-                            }
-                            .container {
-                                max-width: 1000px;
-                                margin: 0 auto;
-                                background: white;
-                                border-radius: 20px;
-                                padding: 2rem;
-                                box-shadow: 0 20px 40px rgba(0,0,0,0.1);
-                            }
-                            .header {
-                                text-align: center;
-                                margin-bottom: 2rem;
-                                padding-bottom: 1rem;
-                                border-bottom: 2px solid #e9ecef;
-                            }
-                            .status-grid {
-                                display: grid;
-                                grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-                                gap: 2rem;
-                                margin-bottom: 2rem;
-                            }
-                            .status-card {
-                                background: #f8f9fa;
-                                border-radius: 10px;
-                                padding: 1.5rem;
-                                border-left: 4px solid #007bff;
-                            }
-                            .status-card.success { border-left-color: #28a745; }
-                            .status-card.warning { border-left-color: #ffc107; }
-                            .status-card.error { border-left-color: #dc3545; }
-                            .status-card h3 {
-                                color: #2c3e50;
-                                margin-bottom: 1rem;
-                                display: flex;
-                                align-items: center;
-                                gap: 0.5rem;
-                            }
-                            .btn {
-                                display: inline-block;
-                                padding: 0.75rem 1.5rem;
-                                margin: 0.5rem;
-                                border: none;
-                                border-radius: 8px;
-                                font-size: 1rem;
-                                font-weight: 500;
-                                text-decoration: none;
-                                cursor: pointer;
-                                transition: all 0.2s ease;
-                            }
-                            .btn-primary { background: #007bff; color: white; }
-                            .btn-success { background: #28a745; color: white; }
-                            .btn-secondary { background: #6c757d; color: white; }
-                            .btn-copy { background: #17a2b8; color: white; }
-                            .btn:hover { transform: translateY(-2px); opacity: 0.9; }
-                            .token-section { background: #fff3cd; border: 1px solid #ffeaa7; border-radius: 10px; padding: 1.5rem; margin: 1rem 0; }
-                            .token-status.valid { color: #28a745; font-weight: bold; }
-                            .token-status.invalid { color: #dc3545; font-weight: bold; }
-                            .code-block {
-                                background: #f8f9fa;
-                                border: 1px solid #dee2e6;
-                                border-radius: 5px;
-                                padding: 0.75rem;
-                                font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
-                                font-size: 0.875rem;
-                                margin: 0.5rem 0;
-                                overflow-x: auto;
-                            }
-                            .instructions-section {
-                                background: #e3f2fd;
-                                border-radius: 10px;
-                                padding: 1.5rem;
-                                margin: 2rem 0;
-                            }
-                            .instructions-section h3 { color: #1976d2; margin-bottom: 1rem; }
-                            .instructions-section ol { margin-left: 1.5rem; }
-                            .instructions-section li { margin-bottom: 0.5rem; line-height: 1.6; }
-                            .endpoint-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1rem; }
-                            .endpoint { background: white; border: 1px solid #dee2e6; border-radius: 5px; padding: 1rem; }
-                            .endpoint strong { color: #495057; }
-                        </style>
-                    </head>
-                    <body>
-                        <div class="container">
-                            <div class="header">
-                                <h1>🔐 OAuth Status Dashboard</h1>
-                                <p>SAP BTP XSUAA Authentication for MCP Server</p>
-                            </div>
-                            
-                            <div class="status-grid">
-                                <div class="status-card ${integrationStatus.oauth_configured ? 'success' : 'error'}">
-                                    <h3>${integrationStatus.oauth_configured ? '✅' : '❌'} OAuth Configuration</h3>
-                                    <p>${integrationStatus.oauth_configured ? 'XSUAA service is properly configured' : 'XSUAA service not configured - bind XSUAA service to enable OAuth'}</p>
-                                </div>
-                                
-                                <div class="status-card ${integrationStatus.authentication.current_status === 'token_provided' ? 'success' : 'warning'}">
-                                    <h3>🔑 Authentication Status</h3>
-                                    <p><strong>Status:</strong> ${integrationStatus.authentication.current_status}</p>
-                                    <p><strong>Required:</strong> ${integrationStatus.authentication.required ? 'Yes' : 'No'}</p>
-                                    ${!token ? '<a href="/oauth/authorize" class="btn btn-primary">🚀 Get Token</a>' : ''}
-                                </div>
-                                
-                                <div class="status-card ${'integration_ready' in integrationStatus && integrationStatus.integration_ready ? 'success' : 'warning'}">
-                                    <h3>🔗 MCP Integration</h3>
-                                    <p><strong>Ready:</strong> ${'integration_ready' in integrationStatus && integrationStatus.integration_ready ? 'Yes' : 'No'}</p>
-                                    <p><strong>Server:</strong> ${integrationStatus.mcp_integration.server_url}</p>
-                                    <p><strong>Auth:</strong> ${integrationStatus.mcp_integration.authentication_method}</p>
-                                </div>
-                            </div>
-                            
-                            ${tokenDisplay}
-                            
-                            <div class="instructions-section">
-                                <h3>📋 MCP Client Setup Instructions</h3>
-                                
-                                ${Object.entries(connectionInstructions).map(([clientKey, clientInfo]: [string, any]) => `
-                                    <div class="endpoint" style="margin-bottom: 1rem;">
-                                        <h4>${clientInfo.title}</h4>
-                                        <p>${clientInfo.description}</p>
-                                        <ol>
-                                            ${clientInfo.steps.map((step: string) => `<li>${step}</li>`).join('')}
-                                        </ol>
-                                        ${clientInfo.directCommand ? `<div class="code-block">${clientInfo.directCommand}</div>` : ''}
-                                    </div>
-                                `).join('')}
-                            </div>
-                            
-                            <div class="status-card">
-                                <h3>🔗 Available Endpoints</h3>
-                                <div class="endpoint-list">
-                                    ${Object.entries(integrationStatus.endpoints).map(([key, url]) => `
-                                        <div class="endpoint">
-                                            <strong>${key}:</strong><br>
-                                            <a href="${url}" target="_blank">${url}</a>
-                                        </div>
-                                    `).join('')}
-                                </div>
-                            </div>
-                            
-                            <div style="text-align: center; margin-top: 2rem; padding-top: 1rem; border-top: 1px solid #dee2e6;">
-                                <button onclick="refreshPage()" class="btn btn-secondary">🔄 Refresh Status</button>
-                                <button onclick="copyStatusJson()" class="btn btn-copy">📋 Copy JSON Status</button>
-                                <a href="${baseUrl}/docs" class="btn btn-secondary">📚 API Documentation</a>
-                            </div>
-                        </div>
-                        
-                        <script>
-                            function copyToken(token) {
-                                navigator.clipboard.writeText(token).then(() => {
-                                    showMessage('Token copied to clipboard!', 'success');
-                                });
-                            }
-                            
-                            function refreshPage() {
-                                window.location.reload();
-                            }
-                            
-                            function copyStatusJson() {
-                                fetch('${baseUrl}/oauth/status?format=json')
-                                    .then(response => response.json())
-                                    .then(data => {
-                                        navigator.clipboard.writeText(JSON.stringify(data, null, 2));
-                                        showMessage('JSON status copied to clipboard!', 'success');
-                                    })
-                                    .catch(error => showMessage('Failed to copy JSON status', 'error'));
-                            }
-                            
-                            function showMessage(message, type) {
-                                const alertDiv = document.createElement('div');
-                                alertDiv.style.cssText = \`
-                                    position: fixed; top: 20px; right: 20px; z-index: 1000;
-                                    padding: 1rem; border-radius: 5px; font-weight: 500;
-                                    background: \${type === 'success' ? '#28a745' : '#dc3545'};
-                                    color: white; box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-                                \`;
-                                alertDiv.textContent = message;
-                                document.body.appendChild(alertDiv);
-                                
-                                setTimeout(() => {
-                                    alertDiv.remove();
-                                }, 3000);
-                            }
-                        </script>
-                    </body>
-                    </html>
-                `);
+                const htmlContent = renderOAuthStatusTemplate(integrationStatus, tokenDisplay, connectionInstructions, baseUrl);
+                res.send(htmlContent);
             }
             
         } catch (error) {

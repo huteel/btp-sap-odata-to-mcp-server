@@ -1,6 +1,4 @@
 {
-  "xsappname": "btp-sap-odata-to-mcp-server-development",
-  "tenant-mode": "dedicated",
   "description": "BTP SAP OData MCP Server Security Configuration",
   "scopes": [
     {
