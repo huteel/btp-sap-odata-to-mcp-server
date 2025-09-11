@@ -10,7 +10,8 @@
     "npm": ">=8.0.0"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && npm run copy-static",
+    "copy-static": "mkdir -p dist/public && cp -r src/public/* dist/public/ || xcopy src\\public dist\\public /E /I /Y 2>NUL || echo 'Static files copied'",
     "build:watch": "tsc --watch",
     "start": "node dist/index.js",
     "start:http": "npm run build && node dist/index.js",
@@ -32,6 +33,7 @@
     "@sap/xssec": "^3.6.1",
     "@types/sap__xsenv": "^3.3.2",
     "@xmldom/xmldom": "^0.9.8",
+    "axios": "^1.12.0",
     "cors": "^2.8.5",
     "dotenv": "^17.2.1",
     "express": "^4.18.0",

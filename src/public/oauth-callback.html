@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SAP MCP Authentication Success</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #333;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            padding: 2.5rem;
+            max-width: 600px;
+            width: 90%;
+            text-align: center;
+        }
+
+        .success-icon {
+            font-size: 4rem;
+            color: #28a745;
+            margin-bottom: 1rem;
+        }
+
+        h1 {
+            color: #2c3e50;
+            margin-bottom: 0.5rem;
+            font-size: 2rem;
+        }
+
+        .subtitle {
+            color: #6c757d;
+            margin-bottom: 2rem;
+            font-size: 1.1rem;
+        }
+
+        .user-info {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 1rem;
+            margin-bottom: 2rem;
+            border-left: 4px solid #007bff;
+        }
+
+        .token-section {
+            background: #fff3cd;
+            border: 1px solid #ffeaa7;
+            border-radius: 10px;
+            padding: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        .token-display {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 5px;
+            padding: 0.75rem;
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 0.875rem;
+            word-break: break-all;
+            margin: 1rem 0;
+            max-height: 100px;
+            overflow-y: auto;
+        }
+
+        .btn {
+            display: inline-block;
+            padding: 0.75rem 1.5rem;
+            margin: 0.5rem;
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 500;
+            text-decoration: none;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            min-width: 200px;
+        }
+
+        .btn-primary {
+            background: #007bff;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #0056b3;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,123,255,0.3);
+        }
+
+        .btn-success {
+            background: #28a745;
+            color: white;
+        }
+
+        .btn-success:hover {
+            background: #1e7e34;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(40,167,69,0.3);
+        }
+
+        .btn-secondary {
+            background: #6c757d;
+            color: white;
+        }
+
+        .btn-secondary:hover {
+            background: #545b62;
+        }
+
+        .instructions {
+            background: #e3f2fd;
+            border-radius: 10px;
+            padding: 1.5rem;
+            margin: 2rem 0;
+            text-align: left;
+        }
+
+        .instructions h3 {
+            color: #1976d2;
+            margin-bottom: 1rem;
+        }
+
+        .instructions ol {
+            margin-left: 1.5rem;
+        }
+
+        .instructions li {
+            margin-bottom: 0.5rem;
+            line-height: 1.6;
+        }
+
+        .token-info {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 1rem;
+            flex-wrap: wrap;
+            gap: 1rem;
+        }
+
+        .expiry-info {
+            color: #fd7e14;
+            font-weight: 500;
+        }
+
+        .copied-message {
+            color: #28a745;
+            font-weight: 500;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+
+        .copied-message.show {
+            opacity: 1;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 1.5rem;
+            }
+            
+            .btn {
+                width: 100%;
+                margin: 0.25rem 0;
+            }
+            
+            .token-info {
+                flex-direction: column;
+                text-align: center;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="success-icon">✅</div>
+        <h1>Authentication Successful!</h1>
+        <p class="subtitle">You are now authenticated with SAP BTP and ready to access your OData services.</p>
+        
+        <div id="userInfo" class="user-info">
+            <strong>Loading user information...</strong>
+        </div>
+
+        <div class="token-section">
+            <h3>🔑 Your Access Token</h3>
+            <p>Use this token to authenticate with MCP clients:</p>
+            <div id="tokenDisplay" class="token-display">Loading token...</div>
+            
+            <div class="token-info">
+                <span id="expiryInfo" class="expiry-info">Expires in: Loading...</span>
+                <span id="copiedMessage" class="copied-message">Token copied to clipboard!</span>
+            </div>
+            
+            <button onclick="copyToken()" class="btn btn-success">📋 Copy Token</button>
+        </div>
+
+        <div style="margin: 2rem 0;">
+            <button onclick="launchInspector()" class="btn btn-primary">🚀 Launch MCP Inspector</button>
+            <button onclick="refreshToken()" class="btn btn-secondary">🔄 Refresh Token</button>
+        </div>
+
+        <div class="instructions">
+            <h3>📋 Manual MCP Inspector Setup</h3>
+            <ol>
+                <li>Open MCP Inspector: <code>npx @modelcontextprotocol/inspector</code></li>
+                <li>Enter Server URL: <code id="mcpUrl">http://localhost:3000/mcp</code></li>
+                <li>Add Header: <code>Authorization: Bearer [your-token]</code></li>
+                <li>Click "Connect" to start exploring SAP data</li>
+            </ol>
+        </div>
+
+        <div style="margin-top: 2rem; padding-top: 1rem; border-top: 1px solid #dee2e6;">
+            <p style="color: #6c757d; font-size: 0.9rem;">
+                <strong>Security Note:</strong> Your token will expire in 1 hour. 
+                Use the refresh button or re-authenticate when needed.
+            </p>
+        </div>
+    </div>
+
+    <script>
+        let tokenData = {};
+        let baseUrl = window.location.origin;
+
+        // Extract token data from URL parameters or fetch from server
+        async function loadTokenData() {
+            try {
+                const urlParams = new URLSearchParams(window.location.search);
+                const code = urlParams.get('code');
+                
+                if (code) {
+                    // Exchange code for token via our callback endpoint
+                    const response = await fetch(`${baseUrl}/oauth/callback?code=${code}`, {
+                        method: 'GET',
+                        headers: {
+                            'Accept': 'application/json'
+                        }
+                    });
+                    
+                    if (response.ok) {
+                        tokenData = await response.json();
+                    } else {
+                        throw new Error('Failed to exchange code for token');
+                    }
+                } else {
+                    // Check if token data is passed via URL hash (fallback)
+                    const hashParams = new URLSearchParams(window.location.hash.substring(1));
+                    if (hashParams.get('access_token')) {
+                        tokenData = {
+                            accessToken: hashParams.get('access_token'),
+                            expiresIn: parseInt(hashParams.get('expires_in') || '3600')
+                        };
+                    }
+                }
+
+                if (tokenData.accessToken) {
+                    updateUI();
+                    await loadUserInfo();
+                } else {
+                    document.querySelector('.container').innerHTML = `
+                        <div class="success-icon" style="color: #dc3545;">❌</div>
+                        <h1>Authentication Failed</h1>
+                        <p>No valid token received. Please try the authentication flow again.</p>
+                        <a href="${baseUrl}/oauth/authorize" class="btn btn-primary">Try Again</a>
+                    `;
+                }
+            } catch (error) {
+                console.error('Error loading token data:', error);
+                document.querySelector('.container').innerHTML = `
+                    <div class="success-icon" style="color: #dc3545;">❌</div>
+                    <h1>Error</h1>
+                    <p>Failed to load authentication data: ${error.message}</p>
+                    <a href="${baseUrl}/oauth/authorize" class="btn btn-primary">Try Again</a>
+                `;
+            }
+        }
+
+        async function loadUserInfo() {
+            try {
+                const response = await fetch(`${baseUrl}/oauth/userinfo`, {
+                    headers: {
+                        'Authorization': `Bearer ${tokenData.accessToken}`
+                    }
+                });
+
+                if (response.ok) {
+                    const userInfo = await response.json();
+                    document.getElementById('userInfo').innerHTML = `
+                        <strong>Welcome, ${userInfo.username}!</strong><br>
+                        <small>Email: ${userInfo.email || 'Not provided'} | 
+                        Scopes: ${userInfo.scopes ? userInfo.scopes.join(', ') : 'None'}</small>
+                    `;
+                }
+            } catch (error) {
+                console.error('Error loading user info:', error);
+                document.getElementById('userInfo').innerHTML = `
+                    <strong>Authentication successful</strong><br>
+                    <small>User info could not be loaded</small>
+                `;
+            }
+        }
+
+        function updateUI() {
+            document.getElementById('tokenDisplay').textContent = tokenData.accessToken;
+            document.getElementById('mcpUrl').textContent = `${baseUrl}/mcp`;
+            
+            if (tokenData.expiresIn) {
+                const expiryTime = new Date(Date.now() + tokenData.expiresIn * 1000);
+                document.getElementById('expiryInfo').textContent = 
+                    `Expires in: ${Math.floor(tokenData.expiresIn / 60)} minutes (${expiryTime.toLocaleTimeString()})`;
+            }
+        }
+
+        function copyToken() {
+            const tokenText = tokenData.accessToken;
+            
+            // Modern async clipboard API
+            if (navigator.clipboard && window.isSecureContext) {
+                navigator.clipboard.writeText(tokenText).then(() => {
+                    showCopiedMessage();
+                });
+            } else {
+                // Fallback for older browsers
+                const textArea = document.createElement('textarea');
+                textArea.value = tokenText;
+                document.body.appendChild(textArea);
+                textArea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textArea);
+                showCopiedMessage();
+            }
+        }
+
+        function showCopiedMessage() {
+            const message = document.getElementById('copiedMessage');
+            message.classList.add('show');
+            setTimeout(() => {
+                message.classList.remove('show');
+            }, 2000);
+        }
+
+        function launchInspector() {
+            // Generate MCP Inspector URL with pre-configured authentication
+            const inspectorUrl = `${baseUrl}/oauth/inspector?token=${encodeURIComponent(tokenData.accessToken)}`;
+            
+            // Try to open in new window/tab
+            const newWindow = window.open(inspectorUrl, '_blank');
+            
+            if (!newWindow) {
+                // If popup was blocked, show instructions
+                alert(`Popup blocked! Please navigate to: ${inspectorUrl}`);
+            }
+        }
+
+        async function refreshToken() {
+            if (!tokenData.refreshToken) {
+                alert('No refresh token available. Please re-authenticate.');
+                window.location.href = `${baseUrl}/oauth/authorize`;
+                return;
+            }
+
+            try {
+                const response = await fetch(`${baseUrl}/oauth/refresh`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        refreshToken: tokenData.refreshToken
+                    })
+                });
+
+                if (response.ok) {
+                    const newTokenData = await response.json();
+                    tokenData = { ...tokenData, ...newTokenData };
+                    updateUI();
+                    showCopiedMessage();
+                } else {
+                    throw new Error('Token refresh failed');
+                }
+            } catch (error) {
+                alert('Token refresh failed. Please re-authenticate.');
+                window.location.href = `${baseUrl}/oauth/authorize`;
+            }
+        }
+
+        // Initialize when page loads
+        window.addEventListener('load', loadTokenData);
+    </script>
+</body>
+</html>

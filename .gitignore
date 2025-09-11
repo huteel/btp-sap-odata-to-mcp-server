@@ -4,3 +4,5 @@
 .env
 mta_archives/
 default-env.json
+/proxy/node_modules/
+/.claude/
