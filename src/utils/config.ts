@@ -10,10 +10,15 @@ export class Config {
     private loadConfiguration(): void {
         // Load from environment variables
         this.config.set('sap.destinationName', process.env.SAP_DESTINATION_NAME || 'SAP_SYSTEM');
+        this.config.set('sap.discoveryDestinationName', process.env.SAP_DISCOVERY_DESTINATION_NAME);
+        this.config.set('sap.executionDestinationName', process.env.SAP_EXECUTION_DESTINATION_NAME);
         this.config.set('request.timeout', parseInt(process.env.REQUEST_TIMEOUT || '30000'));
         this.config.set('request.retries', parseInt(process.env.REQUEST_RETRIES || '3'));
         this.config.set('log.level', process.env.LOG_LEVEL || 'info');
         this.config.set('node.env', process.env.NODE_ENV || 'development');
+        
+        // OAuth configuration
+        this.config.set('oauth.redirectBaseUrl', process.env.OAUTH_REDIRECT_BASE_URL || 'http://localhost:3000');
         
         // OData service discovery configuration
         this.loadODataServiceConfig();

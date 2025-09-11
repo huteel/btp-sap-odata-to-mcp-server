@@ -18,6 +18,7 @@ import { z } from "zod";
  */
 export class HierarchicalSAPToolRegistry {
     private serviceCategories = new Map<string, string[]>();
+    private userToken?: string;
 
     constructor(
         private mcpServer: McpServer,
@@ -26,6 +27,15 @@ export class HierarchicalSAPToolRegistry {
         private discoveredServices: ODataService[]
     ) {
         this.categorizeServices();
+    }
+
+    /**
+     * Set the user's JWT token for authenticated operations
+     */
+    setUserToken(token?: string) {
+        this.userToken = token;
+        this.sapClient.setUserToken(token);
+        this.logger.debug(`User token ${token ? 'set' : 'cleared'} for tool registry`);
     }
 
     /**
@@ -39,7 +49,7 @@ export class HierarchicalSAPToolRegistry {
             "search-sap-services",
             {
                 title: "Search SAP Services",
-                description: "Search and filter available SAP OData services by name, category, or keyword. Use this first to find relevant services before accessing entities.",
+                description: "🔐 AUTHENTICATION AWARE: Search and filter available SAP OData services by name, category, or keyword. Service discovery uses technical user, but data operations will require user authentication. Use this first to find relevant services before accessing entities.",
                 inputSchema: {
                     query: z.string().optional().describe("Search term to filter services (name, title, description)"),
                     category: z.enum(["business-partner", "sales", "finance", "procurement", "hr", "logistics", "all"]).optional().describe("Service category filter"),
@@ -56,7 +66,7 @@ export class HierarchicalSAPToolRegistry {
             "discover-service-entities",
             {
                 title: "Discover Service Entities",
-                description: "List all entities and their capabilities within a specific SAP service. Use this after finding a service to understand what data you can work with.",
+                description: "🔐 AUTHENTICATION AWARE: List all entities and their capabilities within a specific SAP service. Entity discovery uses technical user, but actual data access requires user authentication. Use this after finding a service to understand what data you can work with.",
                 inputSchema: {
                     serviceId: z.string().describe("The SAP service ID to explore"),
                     showCapabilities: z.boolean().default(true).describe("Show CRUD capabilities for each entity")
@@ -72,7 +82,7 @@ export class HierarchicalSAPToolRegistry {
             "get-entity-schema",
             {
                 title: "Get Entity Schema",
-                description: "Get detailed schema information for a specific entity including properties, types, keys, and constraints.",
+                description: "🔐 AUTHENTICATION AWARE: Get detailed schema information for a specific entity including properties, types, keys, and constraints. Schema access uses technical user, but data operations require user authentication.",
                 inputSchema: {
                     serviceId: z.string().describe("The SAP service ID"),
                     entityName: z.string().describe("The entity name")
@@ -88,7 +98,7 @@ export class HierarchicalSAPToolRegistry {
             "execute-entity-operation",
             {
                 title: "Execute Entity Operation",
-                description: "Perform CRUD operations on SAP entities. Use discover-service-entities first to understand available entities and their schemas.",
+                description: "🔒 AUTHENTICATION REQUIRED: Perform CRUD operations on SAP entities using authenticated user context. This tool requires valid JWT token for authorization and audit trail. Use discover-service-entities first to understand available entities and their schemas. Operations execute under user's SAP identity.",
                 inputSchema: {
                     serviceId: z.string().describe("The SAP service ID"),
                     entityName: z.string().describe("The entity name within the service"),
@@ -101,7 +111,8 @@ export class HierarchicalSAPToolRegistry {
                         $orderby: z.string().optional(),
                         $top: z.number().optional(),
                         $skip: z.number().optional()
-                    }).optional().describe("OData query options (for read operations)")
+                    }).optional().describe("OData query options (for read operations)"),
+                    useUserToken: z.boolean().optional().describe("Use the authenticated user's token for this operation (default: true for data operations)")
                 }
             },
             async (args: Record<string, unknown>) => {
@@ -429,6 +440,7 @@ export class HierarchicalSAPToolRegistry {
             const operation = args.operation as string;
             const parameters = args.parameters as Record<string, unknown> || {};
             const queryOptions = args.queryOptions as Record<string, unknown> || {};
+            const useUserToken = args.useUserToken !== false; // Default to true
 
             // Validate service
             const service = this.discoveredServices.find(s => s.id === serviceId);
@@ -454,6 +466,13 @@ export class HierarchicalSAPToolRegistry {
                 };
             }
 
+            // Set user token if requested and available
+            if (useUserToken && this.userToken) {
+                this.sapClient.setUserToken(this.userToken);
+            } else {
+                this.sapClient.setUserToken(undefined);
+            }
+
             // Execute the operation
             let response;
             let operationDescription = "";
@@ -464,13 +483,13 @@ export class HierarchicalSAPToolRegistry {
                     if (queryOptions.$top) operationDescription += ` (top ${queryOptions.$top})`;
                     if (queryOptions.$filter) operationDescription += ` with filter: ${queryOptions.$filter}`;
                     
-                    response = await this.sapClient.readEntitySet(service.url, entityType.entitySet!, queryOptions);
+                    response = await this.sapClient.readEntitySet(service.url, entityType.entitySet!, queryOptions, false);
                     break;
 
                 case 'read-single': {
                     const keyValue = this.buildKeyValue(entityType, parameters);
                     operationDescription = `Reading single ${entityName} with key: ${keyValue}`;
-                    response = await this.sapClient.readEntity(service.url, entityType.entitySet!, keyValue);
+                    response = await this.sapClient.readEntity(service.url, entityType.entitySet!, keyValue, false);
                     break;
                 }
 
@@ -603,6 +622,106 @@ export class HierarchicalSAPToolRegistry {
             }
         );
 
+        // Register system instructions for Claude AI
+        this.mcpServer.registerResource(
+            "system-instructions",
+            "sap://system/instructions",
+            {
+                title: "SAP MCP Server Instructions for Claude AI",
+                description: "Comprehensive instructions for helping users interact with SAP OData services",
+                mimeType: "text/markdown"
+            },
+            async (uri) => ({
+                contents: [{
+                    uri: uri.href,
+                    text: this.getSystemInstructions(),
+                    mimeType: "text/markdown"
+                }]
+            })
+        );
+
+        // Register authentication status resource
+        this.mcpServer.registerResource(
+            "authentication-status",
+            "sap://auth/status",
+            {
+                title: "Authentication Status and Guidance",
+                description: "Current authentication status and user guidance for OAuth flow",
+                mimeType: "application/json"
+            },
+            async (uri) => {
+                const authStatus = {
+                    authentication: {
+                        required: true,
+                        configured: true, // XSUAA is configured
+                        current_status: this.userToken ? 'authenticated' : 'not_authenticated',
+                        token_present: !!this.userToken
+                    },
+                    user_context: this.userToken ? {
+                        has_token: true,
+                        message: 'User is authenticated and operations will use their SAP identity',
+                        dual_auth_model: {
+                            discovery: 'Uses technical user for service metadata discovery',
+                            execution: 'Uses your JWT token for all data operations'
+                        }
+                    } : {
+                        has_token: false,
+                        message: 'User must authenticate before accessing SAP data',
+                        action_required: 'OAuth authentication flow must be completed'
+                    },
+                    claude_ai_instructions: this.userToken ? {
+                        status: 'READY',
+                        message: 'User is authenticated. You can now help them access SAP data.',
+                        workflow: [
+                            'Start with search-sap-services to discover available services',
+                            'Use discover-service-entities to explore service capabilities',
+                            'Use get-entity-schema to understand entity structure',
+                            'Execute CRUD operations with execute-entity-operation'
+                        ],
+                        security_context: 'Operations execute under authenticated user identity'
+                    } : {
+                        status: 'AUTHENTICATION_REQUIRED',
+                        message: 'CRITICAL: User must authenticate before you can help with SAP operations',
+                        required_actions: [
+                            'Guide user through OAuth authentication flow',
+                            'Explain authentication is mandatory for SAP access',
+                            'Provide clear step-by-step authentication instructions',
+                            'Do NOT attempt SAP operations without authentication'
+                        ],
+                        oauth_flow_guidance: {
+                            step1: 'Direct user to /oauth/authorize endpoint',
+                            step2: 'User logs in with SAP BTP credentials',
+                            step3: 'User copies access token from callback',
+                            step4: 'User provides token to MCP client',
+                            step5: 'Token is included in Authorization header for all requests'
+                        }
+                    },
+                    endpoints: {
+                        authorize: '/oauth/authorize',
+                        callback: '/oauth/callback',
+                        refresh: '/oauth/refresh',
+                        userinfo: '/oauth/userinfo',
+                        discovery: '/.well-known/oauth-authorization-server'
+                    },
+                    security_model: {
+                        type: 'OAuth 2.0 with SAP XSUAA',
+                        token_lifetime: '1 hour',
+                        refresh_token_lifetime: '24 hours',
+                        scope_based_authorization: true,
+                        audit_trail: 'All operations logged under user identity'
+                    }
+                };
+                
+                return {
+                    contents: [{
+                        uri: uri.href,
+                        text: JSON.stringify(authStatus, null, 2),
+                        mimeType: "application/json"
+                    }]
+                };
+            }
+        );
+
         this.mcpServer.registerResource(
             "sap-services",
             "sap://services",
@@ -628,5 +747,133 @@ export class HierarchicalSAPToolRegistry {
                 }]
             })
         );
+    }
+
+    /**
+     * Generate comprehensive system instructions for Claude AI
+     */
+    private getSystemInstructions(): string {
+        return `# 🔐 SAP OData MCP Server - AUTHENTICATION REQUIRED
+
+**CRITICAL FOR CLAUDE AI**: This server requires OAuth 2.0 authentication for all SAP operations.
+
+## ⚠️ AUTHENTICATION STATUS CHECK
+
+**BEFORE HELPING USERS**: Always check the authentication-status resource (sap://auth/status) to understand if the user is authenticated.
+
+## 🚨 MANDATORY AUTHENTICATION WORKFLOW
+
+**If user is NOT authenticated:**
+1. **STOP** - Do not attempt any SAP operations
+2. **GUIDE USER**: Direct them to complete OAuth authentication first
+3. **EXPLAIN**: Authentication is mandatory for SAP data access
+4. **PROVIDE INSTRUCTIONS**: Step-by-step OAuth flow guidance
+
+**Authentication Requirements:**
+1. User must navigate to /oauth/authorize endpoint to get access token
+2. User must include token in Authorization header: \`Bearer <token>\`
+3. Server uses dual authentication model:
+   - **Discovery operations**: Technical user (reliable metadata access)
+   - **Data operations**: User's JWT token (proper authorization & audit trail)
+
+## 🛠️ Available Tools
+
+You have access to 4 hierarchical discovery tools:
+
+### 1. search-sap-services
+- **Purpose**: Find and filter available SAP OData services
+- **Parameters**: query (optional), category (business-partner, sales, finance, etc.), limit
+- **Use when**: User wants to explore available services or find specific business areas
+- **Example**: "Find all sales-related services" → Use category: "sales"
+
+### 2. discover-service-entities
+- **Purpose**: List all entities within a specific service
+- **Parameters**: serviceId (required), showCapabilities (boolean)
+- **Use when**: User wants to understand what data is available in a service
+- **Example**: "What can I do with the customer service?" → Use the service ID from search results
+
+### 3. get-entity-schema
+- **Purpose**: Get detailed schema information for an entity
+- **Parameters**: serviceId, entityName
+- **Use when**: User needs to understand entity structure before CRUD operations
+- **Shows**: Properties, types, keys, nullable fields, capabilities
+
+### 4. execute-entity-operation
+- **Purpose**: Perform CRUD operations on entities
+- **Parameters**: serviceId, entityName, operation, parameters, queryOptions, useUserToken
+- **Operations**: read, read-single, create, update, delete
+- **Use when**: User wants to interact with actual data
+
+## 📋 Recommended Workflow
+
+### For Data Discovery:
+1. Start with \`search-sap-services\` to find relevant services
+2. Use \`discover-service-entities\` to explore what's available
+3. Use \`get-entity-schema\` for detailed entity information
+
+### For Data Operations:
+1. Complete discovery workflow first
+2. Use \`execute-entity-operation\` with appropriate parameters
+3. Always check entity capabilities before write operations
+
+## 🎯 Best Practices for Helping Users
+
+### Authentication Guidance:
+- Always remind users about OAuth requirements
+- If operations fail with auth errors, guide them to get a fresh token
+- Explain that discovery uses technical user, operations use their credentials
+
+### Query Optimization:
+- Use OData query options (\$filter, \$select, \$top) to limit data
+- Encourage filtering to avoid large result sets
+- Show users how to construct proper OData filters
+
+### Error Handling:
+- If entity not found, suggest using discovery tools first
+- For permission errors, explain JWT token requirements
+- Guide users to check entity capabilities before operations
+
+### Natural Language Processing:
+- Translate user requests into appropriate tool calls
+- Break complex requests into multiple steps
+- Explain what you're doing and why
+
+## 🔍 Common User Scenarios
+
+### "Show me customer data"
+1. Search for business-partner or customer services
+2. Discover entities in the relevant service
+3. Read customer entities with appropriate filters
+
+### "Create a new order"
+1. Find sales/order services
+2. Get schema for order entity
+3. Check if entity is creatable
+4. Execute create operation with required fields
+
+### "Update inventory levels"
+1. Search for logistics/inventory services
+2. Discover material/inventory entities
+3. Check update capabilities
+4. Execute update with new values
+
+## ⚠️ Important Reminders
+
+- **Always authenticate first**: Guide users through OAuth flow
+- **Respect entity capabilities**: Don't attempt creates on read-only entities
+- **Use proper OData syntax**: Help construct valid filters and selects
+- **Security context**: Operations run under user's SAP credentials
+- **Token expiration**: Tokens expire (typically 1 hour) - guide refresh
+
+## 🎭 Your Role
+
+Act as an expert SAP consultant who:
+- Understands business processes and data relationships
+- Can translate business needs into technical operations
+- Provides clear, step-by-step guidance
+- Explains SAP concepts in user-friendly terms
+- Ensures secure, authorized access to data
+
+Remember: You're not just executing commands, you're helping users understand and work with their SAP data safely and effectively.`;
     }
 }
