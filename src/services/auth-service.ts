@@ -55,7 +55,7 @@ export class AuthService {
     /**
      * Exchange authorization code for access token
      */
-    async exchangeCodeForToken(code: string, redirectUri?: string): Promise<{ accessToken: string; refreshToken?: string; expiresIn: number }> {
+    async exchangeCodeForToken(code: string, redirectUri?: string): Promise<{ access_token: string; refresh_token?: string; expires_in: number }> {
         if (!this.xsuaaCredentials) {
             throw new Error('XSUAA service not configured');
         }
@@ -86,11 +86,7 @@ export class AuthService {
             }
 
             const tokenData = await response.json();
-            return {
-                accessToken: tokenData.access_token,
-                refreshToken: tokenData.refresh_token,
-                expiresIn: tokenData.expires_in
-            };
+            return tokenData;
         } catch (error) {
             this.logger.error('Failed to exchange code for token:', error);
             throw error;
@@ -372,6 +368,24 @@ export class AuthService {
             tenantMode: this.xsuaaCredentials.tenantmode,
             // Don't expose sensitive credentials
             configured: true
+        };
+    }
+
+    /**
+     * Get XSUAA client credentials for OAuth client registration (sensitive)
+     * This method should only be used internally for client registration
+     */
+    getClientCredentials() {
+        if (!this.xsuaaCredentials) {
+            return null;
+        }
+
+        return {
+            client_id: this.xsuaaCredentials.clientid,
+            client_secret: this.xsuaaCredentials.clientsecret,
+            url: this.xsuaaCredentials.url,
+            identityZone: this.xsuaaCredentials.identityzone,
+            tenantMode: this.xsuaaCredentials.tenantmode
         };
     }
 }

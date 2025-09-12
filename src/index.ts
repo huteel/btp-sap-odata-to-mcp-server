@@ -1,4 +1,4 @@
-import express from 'express';
+import express, { Request, Response } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import path from 'path';
@@ -38,19 +38,19 @@ function renderOAuthStatusTemplate(integrationStatus: any, tokenDisplay: string,
     template = template.replace(/{{oauth_configured_class}}/g, integrationStatus.oauth_configured ? 'success' : 'error');
     template = template.replace(/{{oauth_configured_icon}}/g, integrationStatus.oauth_configured ? '✅' : '❌');
     template = template.replace(/{{oauth_configured_message}}/g, integrationStatus.oauth_configured ? 'XSUAA service is properly configured' : 'XSUAA service not configured - bind XSUAA service to enable OAuth');
-    
+
     template = template.replace(/{{auth_status_class}}/g, integrationStatus.authentication.current_status === 'token_provided' ? 'success' : 'warning');
     template = template.replace(/{{auth_current_status}}/g, integrationStatus.authentication.current_status);
     template = template.replace(/{{auth_required}}/g, integrationStatus.authentication.required ? 'Yes' : 'No');
     template = template.replace(/{{auth_button}}/g, !integrationStatus.authentication.current_status.includes('token') ? '<a href="/oauth/authorize" class="btn btn-primary">🚀 Get Token</a>' : '');
-    
+
     template = template.replace(/{{integration_ready_class}}/g, 'integration_ready' in integrationStatus && integrationStatus.integration_ready ? 'success' : 'warning');
     template = template.replace(/{{integration_ready}}/g, 'integration_ready' in integrationStatus && integrationStatus.integration_ready ? 'Yes' : 'No');
     template = template.replace(/{{server_url}}/g, integrationStatus.mcp_integration.server_url);
     template = template.replace(/{{auth_method}}/g, integrationStatus.mcp_integration.authentication_method);
-    
+
     template = template.replace(/{{token_display}}/g, tokenDisplay);
-    
+
     // Generate connection instructions HTML
     const instructionsHTML = Object.entries(connectionInstructions).map(([clientKey, clientInfo]: [string, any]) => `
         <div class="endpoint" style="margin-bottom: 1rem;">
@@ -63,7 +63,7 @@ function renderOAuthStatusTemplate(integrationStatus: any, tokenDisplay: string,
         </div>
     `).join('');
     template = template.replace(/{{connection_instructions}}/g, instructionsHTML);
-    
+
     // Generate endpoints HTML
     const endpointsHTML = Object.entries(integrationStatus.endpoints).map(([key, url]) => `
         <div class="endpoint">
@@ -72,9 +72,9 @@ function renderOAuthStatusTemplate(integrationStatus: any, tokenDisplay: string,
         </div>
     `).join('');
     template = template.replace(/{{endpoints}}/g, endpointsHTML);
-    
+
     template = template.replace(/{{base_url}}/g, baseUrl);
-    
+
     return template;
 }
 
@@ -215,7 +215,7 @@ export function createApp(): express.Application {
 
     app.use(express.json({ limit: '10mb' }));
     app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-    
+
     // Serve static files from public directory
     const __filename = fileURLToPath(import.meta.url);
     const __dirname = path.dirname(__filename);
@@ -262,7 +262,7 @@ export function createApp(): express.Application {
             features: [
                 'OAuth authentication with SAP XSUAA',
                 'Dynamic SAP OData service discovery',
-                'CRUD operations for all discovered entities', 
+                'CRUD operations for all discovered entities',
                 'JWT token forwarding for secure operations',
                 'Dual destination support (discovery vs execution)',
                 'Natural language query support',
@@ -352,12 +352,12 @@ export function createApp(): express.Application {
                 authentication_priority: 'CRITICAL - Do not attempt SAP operations without authentication'
             }
         };
-        
+
         res.json(serverInfo);
     });
 
     // Main MCP endpoint - handles all MCP communication
-    // SECURITY: Requires authentication for all MCP operations to ensure user context and audit trail
+    // SECURITY: Optional authentication - allows Claude Desktop to connect without OAuth
     app.post('/mcp', authService.authenticateJWT() as express.RequestHandler, async (req, res) => {
         const authReq = req as AuthRequest;
         try {
@@ -461,9 +461,9 @@ export function createApp(): express.Application {
     });
 
     // OAuth Discovery Endpoints - RFC 8414 and OpenID Connect Discovery compliant
-    
-    // OAuth 2.0 Authorization Server Metadata (RFC 8414)
-    app.get('/.well-known/oauth-authorization-server', (req, res) => {
+
+    // OAuth 2.0 Authorization Server Metadata (RFC 8414) - Support both with and without /mcp suffix
+    app.get(['/.well-known/oauth-authorization-server', '/.well-known/oauth-authorization-server/mcp'], (req, res) => {
         try {
             if (!authService.isConfigured()) {
                 return res.status(501).json({
@@ -476,18 +476,18 @@ export function createApp(): express.Application {
             const xsuaaMetadata = authService.getXSUAADiscoveryMetadata()!;
             const appScopes = authService.getApplicationScopes();
             const baseUrl = getBaseUrl(req);
-            
             const discoveryMetadata = {
                 // Core OAuth 2.0 Authorization Server Metadata
                 issuer: xsuaaMetadata.issuer,
-                authorization_endpoint: xsuaaMetadata.endpoints.authorization,
-                token_endpoint: xsuaaMetadata.endpoints.token,
-                // authorization_endpoint: "http://localhost:8080/oauth/authorize",//xsuaaMetadata.endpoints.authorization,
-                // token_endpoint: "http://localhost:8080/oauth/token",// xsuaaMetadata.endpoints.token,
-                userinfo_endpoint: xsuaaMetadata.endpoints.userinfo,
-                revocation_endpoint: xsuaaMetadata.endpoints.revocation,
-                introspection_endpoint: xsuaaMetadata.endpoints.introspection,
-                
+                authorization_endpoint: `${baseUrl}/oauth/authorize`,//xsuaaMetadata.endpoints.authorization,
+                token_endpoint: `${baseUrl}/oauth/token`,//xsuaaMetadata.endpoints.token,
+                userinfo_endpoint: `${baseUrl}/oauth/userinfo`,//xsuaaMetadata.endpoints.userinfo,
+                revocation_endpoint: `${baseUrl}/oauth/revoke`,//xsuaaMetadata.endpoints.revocation,
+                introspection_endpoint: `${baseUrl}/oauth/introspect`,//xsuaaMetadata.endpoints.introspection,
+
+                // Client Registration Endpoint (RFC 7591) - Static client support
+                registration_endpoint: `${baseUrl}/oauth/client-registration`,
+
                 // Supported response types
                 response_types_supported: [
                     'code',
@@ -498,15 +498,21 @@ export function createApp(): express.Application {
                     // 'token id_token',
                     // 'code token id_token'
                 ],
-                
+
                 // Supported grant types
                 grant_types_supported: [
                     'authorization_code',
-                    // 'refresh_token',
-                    // 'client_credentials',
-                    // 'urn:ietf:params:oauth:grant-type:jwt-bearer'
+                    'refresh_token'
                 ],
-                
+
+                // Client Registration Support (RFC 7591)
+                registration_endpoint_auth_methods_supported: [
+                    'none'  // No authentication required for static client registration
+                ],
+                client_registration_types_supported: [
+                    'static'  // Support for static client credentials
+                ],
+
                 // Supported scopes (XSUAA + application scopes)
                 // scopes_supported: [
                 //     'openid',
@@ -516,14 +522,14 @@ export function createApp(): express.Application {
                 //     'uaa.resource',
                 //     ...appScopes
                 // ],
-                
+
                 // Supported authentication methods
                 // token_endpoint_auth_methods_supported: [
                 //     'client_secret_basic',
                 //     'client_secret_post',
                 //     'private_key_jwt'
                 // ],
-                
+
                 // Supported claim types and claims
                 // claim_types_supported: ['normal'],
                 // claims_supported: [
@@ -544,20 +550,21 @@ export function createApp(): express.Application {
                 //     'family_name',
                 //     'phone_number'
                 // ],
-                
+
                 // PKCE support
                 code_challenge_methods_supported: ['S256'],
-                
+
                 // Service documentation
                 service_documentation: `${baseUrl}/docs`,
-                
+
                 // Additional XSUAA specific metadata
                 'x-xsuaa-metadata': {
-                    xsappname: xsuaaMetadata.xsappname,
+                    // xsappname: xsuaaMetadata.xsappname,
+                    client_id: xsuaaMetadata.clientId,
                     identityZone: xsuaaMetadata.identityZone,
                     tenantMode: xsuaaMetadata.tenantMode
                 },
-                
+
                 // MCP-specific extensions
                 'x-mcp-server': {
                     name: 'btp-sap-odata-to-mcp-server',
@@ -571,6 +578,14 @@ export function createApp(): express.Application {
                         'Session-based MCP transport',
                         'Scope-based authorization'
                     ]
+                },
+
+                // MCP Static Client Support
+                'x-mcp-static-client': {
+                    supported: true,
+                    registration_endpoint: `${baseUrl}/oauth/client-registration`,
+                    client_id: xsuaaMetadata.clientId,
+                    client_authentication_method: 'client_secret_basic'
                 }
             };
 
@@ -579,9 +594,138 @@ export function createApp(): express.Application {
             res.json(discoveryMetadata);
         } catch (error) {
             logger.error('Failed to generate OAuth discovery metadata:', error);
-            res.status(500).json({ 
+            res.status(500).json({
                 error: 'Failed to generate discovery metadata',
                 message: error instanceof Error ? error.message : 'Unknown error'
+            });
+        }
+    });
+
+    // Static Client Registration Endpoint (RFC 7591 alternative for XSUAA)
+    app.post('/oauth/client-registration', (req, res) => {
+        try {
+            if (!authService.isConfigured()) {
+                return res.status(501).json({
+                    error: 'OAuth not configured',
+                    message: 'XSUAA service is not configured for this deployment'
+                });
+            }
+
+            const xsuaaCredentials = authService.getServiceInfo();
+            if (!xsuaaCredentials) {
+                return res.status(501).json({
+                    error: 'OAuth not configured',
+                    message: 'XSUAA service credentials not available'
+                });
+            }
+
+            // Get client credentials including secret (sensitive operation)
+            const clientCredentials = authService.getClientCredentials();
+            if (!clientCredentials) {
+                return res.status(501).json({
+                    error: 'OAuth credentials not available',
+                    message: 'XSUAA client credentials not configured'
+                });
+            }
+
+            const baseUrl = getBaseUrl(req);
+
+            // Return static client registration response per RFC 7591
+            const clientRegistrationResponse = {
+                client_id: clientCredentials.client_id,
+                client_secret: clientCredentials.client_secret,
+                client_id_issued_at: Math.floor(Date.now() / 1000),
+                client_secret_expires_at: 0, // Never expires for static clients
+
+                // OAuth 2.0 Client Metadata
+                redirect_uris: [
+                    `${baseUrl}/oauth/callback`
+                ],
+                grant_types: [
+                    'authorization_code',
+                    'refresh_token'
+                ],
+                response_types: [
+                    'code'
+                ],
+                client_name: 'SAP BTP OData MCP Server',
+                client_uri: baseUrl,
+
+                // Token endpoint authentication method
+                token_endpoint_auth_method: 'client_secret_basic',
+
+                // XSUAA specific metadata
+                'x-xsuaa-metadata': {
+                    url: clientCredentials.url,
+                    identityzone: clientCredentials.identityZone,
+                    tenantmode: clientCredentials.tenantMode,
+                    uaadomain: clientCredentials.url.replace(/^https?:\/\//, '').replace(/\/$/, '')
+                },
+
+                // MCP-specific metadata
+                'x-mcp-integration': {
+                    server_name: 'btp-sap-odata-to-mcp-server',
+                    mcp_endpoint: `${baseUrl}/mcp`,
+                    authentication_flow: 'authorization_code',
+                    supports_refresh: true
+                },
+
+                // Static client indicator
+                registration_client_uri: `${baseUrl}/oauth/client-registration`,
+                client_registration_type: 'static'
+            };
+
+            res.setHeader('Content-Type', 'application/json');
+            res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+            res.json(clientRegistrationResponse);
+
+        } catch (error) {
+            logger.error('Failed to handle client registration:', error);
+            res.status(500).json({
+                error: 'registration_failed',
+                error_description: `Client registration failed: ${error instanceof Error ? error.message : 'Unknown error'}`
+            });
+        }
+    });
+
+    // GET version of client registration for static client discovery
+    app.get('/oauth/client-registration', (req, res) => {
+        try {
+            if (!authService.isConfigured()) {
+                return res.status(501).json({
+                    error: 'OAuth not configured',
+                    message: 'XSUAA service is not configured for this deployment'
+                });
+            }
+
+            const xsuaaCredentials = authService.getServiceInfo();
+            const baseUrl = getBaseUrl(req);
+
+            // Return minimal client information for GET requests
+            const clientInfo = {
+                registration_endpoint: `${baseUrl}/oauth/client-registration`,
+                client_registration_types_supported: ['static'],
+                registration_endpoint_auth_methods_supported: ['none'],
+                static_client_available: true,
+
+                // MCP integration info
+                'x-mcp-integration': {
+                    server_name: 'btp-sap-odata-to-mcp-server',
+                    mcp_endpoint: `${baseUrl}/mcp`,
+                    authentication_required: true,
+                    static_client_supported: true
+                }
+            };
+
+            res.setHeader('Content-Type', 'application/json');
+            res.setHeader('Cache-Control', 'public, max-age=3600');
+            res.json(clientInfo);
+
+        } catch (error) {
+            logger.error('Failed to handle client registration info:', error);
+            res.status(500).json({
+                error: 'server_error',
+                error_description: `Failed to get client registration info: ${error instanceof Error ? error.message : 'Unknown error'}`
             });
         }
     });
@@ -592,7 +736,7 @@ export function createApp(): express.Application {
             const baseUrl = getBaseUrl(req);
             const xsuaaInfo = authService.getServiceInfo();
             const appScopes = authService.getApplicationScopes();
-            
+
             if (!xsuaaInfo) {
                 return res.status(501).json({
                     error: 'OAuth not configured',
@@ -613,38 +757,39 @@ export function createApp(): express.Application {
                     description: 'OAuth 2.0 and OpenID Connect server for SAP OData MCP access',
                     provider: 'SAP BTP XSUAA Service'
                 },
-                
+
                 xsuaa_service: {
                     url: xsuaaInfo.url,
-                    xsappname: xsuaaInfo.xsappname,
+                    // xsappname: xsuaaInfo.xsappname,
+                    client_id: xsuaaInfo.clientId,
                     identityZone: xsuaaInfo.identityZone,
                     tenantMode: xsuaaInfo.tenantMode,
                     configured: xsuaaInfo.configured
                 },
-                
+
                 endpoints: {
                     // Local MCP server endpoints
                     authorization: `${baseUrl}/oauth/authorize`,
                     token_refresh: `${baseUrl}/oauth/refresh`,
                     userinfo: `${baseUrl}/oauth/userinfo`,
-                    
+
                     // XSUAA service endpoints
                     xsuaa_authorization: `${xsuaaInfo.url}/oauth/authorize`,
                     xsuaa_token: `${xsuaaInfo.url}/oauth/token`,
                     xsuaa_userinfo: `${xsuaaInfo.url}/userinfo`,
                     xsuaa_jwks: `${xsuaaInfo.url}/token_keys`,
-                    
+
                     // Discovery endpoints
                     oauth_discovery: `${baseUrl}/.well-known/oauth-authorization-server`,
                     openid_discovery: `${baseUrl}/.well-known/openid_configuration`
                 },
-                
+
                 // application_scopes: appScopes,
-                
+
                 supported_features: [
                     'Authorization Code Flow'
                 ],
-                
+
                 security: {
                     token_lifetime: 3600, // 1 hour
                     refresh_token_lifetime: 86400, // 24 hours
@@ -652,7 +797,7 @@ export function createApp(): express.Application {
                     requires_https: process.env.NODE_ENV === 'production',
                     pkce_required: false
                 },
-                
+
                 mcp_integration: {
                     mcp_server: `${baseUrl}/mcp`,
                     authentication_required: true,
@@ -664,7 +809,7 @@ export function createApp(): express.Application {
                     health_check: `${baseUrl}/health`,
                     documentation: `${baseUrl}/docs`
                 },
-                
+
                 usage_instructions: {
                     step1: `Visit ${baseUrl}/oauth/authorize to initiate OAuth flow`,
                     step2: 'Login with SAP BTP credentials',
@@ -678,7 +823,7 @@ export function createApp(): express.Application {
             res.json(metadata);
         } catch (error) {
             logger.error('Failed to generate OAuth metadata:', error);
-            res.status(500).json({ 
+            res.status(500).json({
                 error: 'Failed to generate OAuth metadata',
                 message: error instanceof Error ? error.message : 'Unknown error'
             });
@@ -687,6 +832,7 @@ export function createApp(): express.Application {
 
     // OAuth endpoints for XSUAA authentication
     app.get('/oauth/authorize', (req, res) => {
+            logger.info(`Start OAuth authorization flow`);
         try {
             if (!authService.isConfigured()) {
                 return res.status(501).json({
@@ -697,7 +843,42 @@ export function createApp(): express.Application {
 
             const state = req.query.state as string || randomUUID();
             const baseUrl = getBaseUrl(req);
+            const mcpRedirectUri = req.query.redirect_uri as string;// || baseUrl;
             const authUrl = authService.getAuthorizationUrl(state, baseUrl);
+            const mcpCodeChallenge = req.query.code_challenge as string;
+            const mcpCodeChallengeMethod = req.query.code_challenge_method as string;
+
+
+            if (!mcpRedirectUri) {
+                return res.status(400).json({
+                    error: 'Missing redirect_uri parameter',
+                    message: 'MCP Inspector redirect URI is required'
+                });
+            }
+
+
+            // Store mapping in a simple in-memory store (you might want to use Redis in production)
+            if (!(global as any).mcpProxyStates) {
+                (global as any).mcpProxyStates = new Map();
+            }
+            (global as any).mcpProxyStates.set(state, {
+                mcpRedirectUri,
+                state,
+                mcpCodeChallenge,
+                mcpCodeChallengeMethod,
+                timestamp: Date.now()
+            });
+
+            // Clean up old states (older than 10 minutes)
+            for (const [key, value] of (global as any).mcpProxyStates.entries()) {
+                if (Date.now() - value.timestamp > 600000) {
+                    (global as any).mcpProxyStates.delete(key);
+                }
+            }
+
+            logger.info(`MCP OAuth proxy initiated for redirect: ${mcpRedirectUri}`);
+
+            logger.info(`Authorize proxy redirecting to : ${authUrl}`);
             res.redirect(authUrl);
         } catch (error) {
             logger.error('Failed to initiate OAuth flow:', error);
@@ -705,19 +886,74 @@ export function createApp(): express.Application {
         }
     });
 
+    // // OAuth callback endpoint - Enhanced with HTML response option and MCP Inspector proxy support
+    // app.get('/proxy/oauth/callback', async (req, res) => {
+    //     try {
+    //         const code = req.query.code as string;
+    //         const state = req.query.state as string;
+
+    //         // Check if this is a MCP Inspector proxy callback
+    //         const mcpProxyStates = (global as any).mcpProxyStates;
+    //         const mcpInfo = state && mcpProxyStates?.get(state);
+
+    //         const baseUrl = getBaseUrl(req);
+    //         if (mcpInfo) {
+                    
+    //                 // Construct the response for MCP Inspector
+    //                 const callbackUrl = new URL(mcpInfo.mcpRedirectUri);
+
+    //                 // Use fragment-based response (implicit flow style) for better compatibility
+    //                 callbackUrl.hash = new URLSearchParams({
+    //                     code,
+    //                     state
+    //                 }).toString();
+
+    //                 logger.info(`MCP Inspector OAuth proxy successful, redirecting to: ${mcpInfo.mcpRedirectUri}`);
+    //                 return res.redirect(callbackUrl.toString());
+
+    //         }
+    //     } catch (error) {
+    //         logger.error('Failed to initiate OAuth flow:', error);
+    //         res.status(500).json({ error: 'Failed to initiate OAuth flow' });
+    //     }
+    // });
+    // OAuth endpoint for token exchange
+    const tokenHandler = async (req: Request, res: Response) => {
+        logger.info(`Start OAuth token exchange flow`);
+        const baseUrl = getBaseUrl(req);
+        try {
+            if (!authService.isConfigured()) {
+                return res.status(501).json({
+                    error: 'OAuth not configured',
+                    message: 'XSUAA service is not configured for this deployment'
+                });
+            }
+
+            const tokenData = await authService.exchangeCodeForToken(req.body.code, authService.getRedirectUri(baseUrl));
+
+            logger.info(`OAuth token exchange successful: ${JSON.stringify(tokenData)}`);
+            res.json(tokenData);
+        } catch (error) {
+            logger.error('Failed to initiate OAuth flow:', error);
+            res.status(500).json({ error: 'Failed to initiate OAuth flow' });
+        }
+    };
+    app.get('/oauth/token', tokenHandler);
+    app.post('/oauth/token', tokenHandler);
     // OAuth callback endpoint - Enhanced with HTML response option and MCP Inspector proxy support
     app.get('/oauth/callback', async (req, res) => {
+        logger.info(`Start OAuth callback handling`);
         try {
             const code = req.query.code as string;
             const state = req.query.state as string;
             const format = req.query.format as string || 'html'; // Default to HTML for better UX
             const acceptHeader = req.headers.accept || '';
             const error = req.query.error as string;
-            
+
             if (error) {
                 const errorMsg = req.query.error_description as string || error;
                 if (format === 'json' || acceptHeader.includes('application/json')) {
-                    return res.status(400).json({ 
+                    return res.status(400).json({
                         error: 'OAuth Authorization Failed',
                         message: errorMsg,
                         details: 'XSUAA authorization was denied or failed'
@@ -732,7 +968,7 @@ export function createApp(): express.Application {
                     `);
                 }
             }
-            
+
             if (!code) {
                 if (format === 'json' || acceptHeader.includes('application/json')) {
                     return res.status(400).json({ error: 'Authorization code not provided' });
@@ -750,36 +986,47 @@ export function createApp(): express.Application {
             // Check if this is a MCP Inspector proxy callback
             const mcpProxyStates = (global as any).mcpProxyStates;
             const mcpInfo = state && mcpProxyStates?.get(state);
-            
-                    const baseUrl = getBaseUrl(req);
+
+            const baseUrl = getBaseUrl(req);
             if (mcpInfo) {
                 // This is an MCP Inspector proxy callback
                 try {
-                    // Exchange code for token with XSUAA using our server's redirect URI 
-                    // (the same one used in the authorization request)
-                    const tokenResult = await authService.exchangeCodeForToken(code, authService.getRedirectUri(baseUrl));
-                    
-                    // Clean up the proxy state
-                    mcpProxyStates.delete(state);
-                    
-                    // Construct the response for MCP Inspector
-                    const callbackUrl = new URL(mcpInfo.mcpRedirectUri);
-                    
+                     const callbackUrl = new URL(mcpInfo.mcpRedirectUri);
+
                     // Use fragment-based response (implicit flow style) for better compatibility
-                    callbackUrl.hash = new URLSearchParams({
-                        access_token: tokenResult.accessToken,
-                        token_type: 'Bearer',
-                        expires_in: tokenResult.expiresIn.toString(),
-                        state: mcpInfo.mcpState || '',
-                        ...(tokenResult.refreshToken && { refresh_token: tokenResult.refreshToken })
+                    const params = new URLSearchParams({
+                        code,
+                        state
                     }).toString();
-                    
+
                     logger.info(`MCP Inspector OAuth proxy successful, redirecting to: ${mcpInfo.mcpRedirectUri}`);
-                    return res.redirect(callbackUrl.toString());
-                    
+                    logger.info(`Callback redirect URL: ${callbackUrl.toString()}?${new URLSearchParams(params)}`);
+                    return res.redirect(`${callbackUrl.toString()}?${new URLSearchParams(params)}`);
+                    // // Exchange code for token with XSUAA using our server's redirect URI
+                    // // (the same one used in the authorization request)
+                    // const tokenResult = await authService.exchangeCodeForToken(code, authService.getRedirectUri(baseUrl));
+
+                    // // Clean up the proxy state
+                    // mcpProxyStates.delete(state);
+
+                    // // Construct the response for MCP Inspector
+                    // const callbackUrl = new URL(mcpInfo.mcpRedirectUri);
+
+                    // // Use fragment-based response (implicit flow style) for better compatibility
+                    // callbackUrl.hash = new URLSearchParams({
+                    //     access_token: tokenResult.access_token,
+                    //     token_type: 'Bearer',
+                    //     expires_in: tokenResult.expires_in.toString(),
+                    //     state: mcpInfo.mcpState || '',
+                    //     ...(tokenResult.refresh_token && { refresh_token: tokenResult.refresh_token })
+                    // }).toString();
+
+                    // logger.info(`MCP Inspector OAuth proxy successful, redirecting to: ${mcpInfo.mcpRedirectUri}`);
+                    // return res.redirect(callbackUrl.toString());
+
                 } catch (error) {
                     logger.error('MCP Inspector OAuth token exchange failed:', error);
-                    
+
                     // Redirect back to MCP Inspector with error
                     const errorUrl = new URL(mcpInfo.mcpRedirectUri);
                     errorUrl.hash = new URLSearchParams({
@@ -787,29 +1034,29 @@ export function createApp(): express.Application {
                         error_description: error instanceof Error ? error.message : 'Token exchange failed',
                         state: mcpInfo.mcpState || ''
                     }).toString();
-                    
+
                     mcpProxyStates.delete(state);
                     return res.redirect(errorUrl.toString());
                 }
             }
 
             // Regular OAuth callback (not MCP Inspector proxy)
-            const tokenData = await authService.exchangeCodeForToken(code,authService.getRedirectUri(baseUrl));
-            
+            const tokenData = await authService.exchangeCodeForToken(code, authService.getRedirectUri(baseUrl));
+
             // Determine response format
             if (format === 'json' || acceptHeader.includes('application/json')) {
                 // JSON response for API clients
                 res.json({
-                    accessToken: tokenData.accessToken,
-                    refreshToken: tokenData.refreshToken,
-                    expiresIn: tokenData.expiresIn,
+                    access_token: tokenData.access_token,
+                    refresh_token: tokenData.refresh_token,
+                    expires_in: tokenData.expires_in,
                     message: 'Authentication successful. Use the access token in the Authorization header for API calls.'
                 });
             } else {
                 // HTML response for browser-based flow (default)
                 const baseUrl = getBaseUrl(req);
-                const expiryTime = new Date(Date.now() + tokenData.expiresIn * 1000);
-                
+                const expiryTime = new Date(Date.now() + tokenData.expires_in * 1000);
+
                 res.send(`
                             <html>
                             <head><title>SAP MCP Authentication Success</title></head>
@@ -817,13 +1064,13 @@ export function createApp(): express.Application {
                                 <h1>✅ Authentication Successful!</h1>
                                 <p>Your access token:</p>
                                 <div style="background: #f8f9fa; padding: 1rem; border-radius: 4px; word-break: break-all; margin: 1rem 0;">
-                                    <code>${tokenData.accessToken}</code>
+                                    <code>${tokenData.access_token}</code>
                                 </div>
-                                <p>Token expires in: ${Math.floor(tokenData.expiresIn / 60)} minutes</p>
+                                <p>Token expires in: ${Math.floor(tokenData.expires_in / 60)} minutes</p>
                                 <div style="margin-top: 2rem;">
-                                    <button onclick="navigator.clipboard.writeText('${tokenData.accessToken}'); alert('Token copied!')" 
+                                    <button onclick="navigator.clipboard.writeText('${tokenData.access_token}'); alert('Token copied!')" 
                                             style="padding: 0.5rem 1rem; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer;">📋 Copy Token</button>
-                                    <a href="/oauth/inspector?token=${encodeURIComponent(tokenData.accessToken)}" 
+                                    <a href="/oauth/inspector?token=${encodeURIComponent(tokenData.access_token)}" 
                                        style="display: inline-block; margin-left: 0.5rem; padding: 0.5rem 1rem; background: #007bff; color: white; text-decoration: none; border-radius: 4px;">🚀 Launch MCP Inspector</a>
                                 </div>
                                 <script>
@@ -837,9 +1084,9 @@ export function createApp(): express.Application {
             }
         } catch (error) {
             logger.error('OAuth callback failed:', error);
-            
+
             if (req.query.format === 'json' || req.headers.accept?.includes('application/json')) {
-                res.status(500).json({ 
+                res.status(500).json({
                     error: 'Authentication failed',
                     details: error instanceof Error ? error.message : 'Unknown error'
                 });
@@ -892,14 +1139,14 @@ export function createApp(): express.Application {
             console.log('Generating OAuth status for baseUrl:', baseUrl);
             const format = req.query.format as string || 'html';
             const token = req.query.token as string || req.headers.authorization?.replace('Bearer ', '');
-            
+
             if (!authService.isConfigured()) {
                 const errorResponse = {
                     error: 'OAuth not configured',
                     message: 'XSUAA service is not configured for this deployment',
                     setup_required: 'Bind XSUAA service to this application'
                 };
-                
+
                 if (format === 'json' || req.headers.accept?.includes('application/json')) {
                     return res.status(501).json(errorResponse);
                 } else {
@@ -912,11 +1159,11 @@ export function createApp(): express.Application {
                     `);
                 }
             }
-            
+
             // Create integration status
             const oauthIntegrationService = new OAuthIntegrationService(authService, logger);
             const integrationStatus = await oauthIntegrationService.createIntegrationStatus(baseUrl, token);
-            
+
             if (format === 'json' || req.headers.accept?.includes('application/json')) {
                 res.json(integrationStatus);
             } else {
@@ -924,19 +1171,19 @@ export function createApp(): express.Application {
                 const tokenStatus = 'token_status' in integrationStatus ? integrationStatus.token_status : undefined;
                 const tokenDisplay = token && tokenStatus ? oauthIntegrationService.generateTokenDisplayHTML(token, tokenStatus, baseUrl) : '';
                 const connectionInstructions = 'connection_instructions' in integrationStatus ? integrationStatus.connection_instructions : {};
-                
+
                 const htmlContent = renderOAuthStatusTemplate(integrationStatus, tokenDisplay, connectionInstructions, baseUrl);
                 res.send(htmlContent);
             }
-            
+
         } catch (error) {
             logger.error('Error generating OAuth status:', error);
-            
+
             const errorResponse = {
                 error: 'Status generation failed',
                 message: error instanceof Error ? error.message : 'Unknown error'
             };
-            
+
             if (req.query.format === 'json' || req.headers.accept?.includes('application/json')) {
                 res.status(500).json(errorResponse);
             } else {
