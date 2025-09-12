@@ -1,9 +1,6 @@
 import express, { Request, Response } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
-import path from 'path';
-import fs from 'fs';
-import { fileURLToPath } from 'url';
 import { randomUUID } from 'node:crypto';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
@@ -18,64 +15,12 @@ import { SAPDiscoveryService } from './services/sap-discovery.js';
 import { ODataService } from './types/sap-types.js';
 import { ServiceDiscoveryConfigService } from './services/service-discovery-config.js';
 import { AuthService, AuthRequest } from './services/auth-service.js';
-import { OAuthIntegrationService } from './services/oauth-integration.js';
 
 // Helper function to get the correct base URL from request
 function getBaseUrl(req: express.Request): string {
     const protocol = req.get('x-forwarded-proto') || req.protocol;
     const host = req.get('host');
     return `${protocol}://${host}`;
-}
-
-// Helper function to render HTML template with data
-function renderOAuthStatusTemplate(integrationStatus: any, tokenDisplay: string, connectionInstructions: any, baseUrl: string): string {
-    const __filename = fileURLToPath(import.meta.url);
-    const __dirname = path.dirname(__filename);
-    const templatePath = path.join(__dirname, 'public', 'oauth-status.html');
-    let template = fs.readFileSync(templatePath, 'utf8');
-
-    // Replace placeholders with actual data
-    template = template.replace(/{{oauth_configured_class}}/g, integrationStatus.oauth_configured ? 'success' : 'error');
-    template = template.replace(/{{oauth_configured_icon}}/g, integrationStatus.oauth_configured ? '✅' : '❌');
-    template = template.replace(/{{oauth_configured_message}}/g, integrationStatus.oauth_configured ? 'XSUAA service is properly configured' : 'XSUAA service not configured - bind XSUAA service to enable OAuth');
-
-    template = template.replace(/{{auth_status_class}}/g, integrationStatus.authentication.current_status === 'token_provided' ? 'success' : 'warning');
-    template = template.replace(/{{auth_current_status}}/g, integrationStatus.authentication.current_status);
-    template = template.replace(/{{auth_required}}/g, integrationStatus.authentication.required ? 'Yes' : 'No');
-    template = template.replace(/{{auth_button}}/g, !integrationStatus.authentication.current_status.includes('token') ? '<a href="/oauth/authorize" class="btn btn-primary">🚀 Get Token</a>' : '');
-
-    template = template.replace(/{{integration_ready_class}}/g, 'integration_ready' in integrationStatus && integrationStatus.integration_ready ? 'success' : 'warning');
-    template = template.replace(/{{integration_ready}}/g, 'integration_ready' in integrationStatus && integrationStatus.integration_ready ? 'Yes' : 'No');
-    template = template.replace(/{{server_url}}/g, integrationStatus.mcp_integration.server_url);
-    template = template.replace(/{{auth_method}}/g, integrationStatus.mcp_integration.authentication_method);
-
-    template = template.replace(/{{token_display}}/g, tokenDisplay);
-
-    // Generate connection instructions HTML
-    const instructionsHTML = Object.entries(connectionInstructions).map(([clientKey, clientInfo]: [string, any]) => `
-        <div class="endpoint" style="margin-bottom: 1rem;">
-            <h4>${clientInfo.title}</h4>
-            <p>${clientInfo.description}</p>
-            <ol>
-                ${clientInfo.steps.map((step: string) => `<li>${step}</li>`).join('')}
-            </ol>
-            ${clientInfo.directCommand ? `<div class="code-block">${clientInfo.directCommand}</div>` : ''}
-        </div>
-    `).join('');
-    template = template.replace(/{{connection_instructions}}/g, instructionsHTML);
-
-    // Generate endpoints HTML
-    const endpointsHTML = Object.entries(integrationStatus.endpoints).map(([key, url]) => `
-        <div class="endpoint">
-            <strong>${key}:</strong><br>
-            <a href="${url}" target="_blank">${url}</a>
-        </div>
-    `).join('');
-    template = template.replace(/{{endpoints}}/g, endpointsHTML);
-
-    template = template.replace(/{{base_url}}/g, baseUrl);
-
-    return template;
 }
 
 /**
@@ -215,11 +160,6 @@ export function createApp(): express.Application {
 
     app.use(express.json({ limit: '10mb' }));
     app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-
-    // Serve static files from public directory
-    const __filename = fileURLToPath(import.meta.url);
-    const __dirname = path.dirname(__filename);
-    app.use('/public', express.static(path.join(__dirname, 'public')));
 
     // Request logging middleware
     app.use((req, res, next) => {
@@ -832,7 +772,7 @@ export function createApp(): express.Application {
 
     // OAuth endpoints for XSUAA authentication
     app.get('/oauth/authorize', (req, res) => {
-            logger.info(`Start OAuth authorization flow`);
+        logger.info(`Start OAuth authorization flow`);
         try {
             if (!authService.isConfigured()) {
                 return res.status(501).json({
@@ -886,37 +826,6 @@ export function createApp(): express.Application {
         }
     });
 
-    // // OAuth callback endpoint - Enhanced with HTML response option and MCP Inspector proxy support
-    // app.get('/proxy/oauth/callback', async (req, res) => {
-    //     try {
-    //         const code = req.query.code as string;
-    //         const state = req.query.state as string;
-
-    //         // Check if this is a MCP Inspector proxy callback
-    //         const mcpProxyStates = (global as any).mcpProxyStates;
-    //         const mcpInfo = state && mcpProxyStates?.get(state);
-
-    //         const baseUrl = getBaseUrl(req);
-    //         if (mcpInfo) {
-                    
-    //                 // Construct the response for MCP Inspector
-    //                 const callbackUrl = new URL(mcpInfo.mcpRedirectUri);
-
-    //                 // Use fragment-based response (implicit flow style) for better compatibility
-    //                 callbackUrl.hash = new URLSearchParams({
-    //                     code,
-    //                     state
-    //                 }).toString();
-
-    //                 logger.info(`MCP Inspector OAuth proxy successful, redirecting to: ${mcpInfo.mcpRedirectUri}`);
-    //                 return res.redirect(callbackUrl.toString());
-
-    //         }
-    //     } catch (error) {
-    //         logger.error('Failed to initiate OAuth flow:', error);
-    //         res.status(500).json({ error: 'Failed to initiate OAuth flow' });
-    //     }
-    // });
     // OAuth endpoint for token exchange
     const tokenHandler = async (req: Request, res: Response) => {
         logger.info(`Start OAuth token exchange flow`);
@@ -931,7 +840,7 @@ export function createApp(): express.Application {
 
             const tokenData = await authService.exchangeCodeForToken(req.body.code, authService.getRedirectUri(baseUrl));
 
-            logger.info(`OAuth token exchange successful: ${JSON.stringify(tokenData)}`);
+            logger.info(`OAuth token exchange successful`);
             res.json(tokenData);
         } catch (error) {
             logger.error('Failed to initiate OAuth flow:', error);
@@ -988,100 +897,30 @@ export function createApp(): express.Application {
             const mcpInfo = state && mcpProxyStates?.get(state);
 
             const baseUrl = getBaseUrl(req);
-            if (mcpInfo) {
-                // This is an MCP Inspector proxy callback
-                try {
-                     const callbackUrl = new URL(mcpInfo.mcpRedirectUri);
-
-                    // Use fragment-based response (implicit flow style) for better compatibility
-                    const params = new URLSearchParams({
-                        code,
-                        state
-                    }).toString();
-
-                    logger.info(`MCP Inspector OAuth proxy successful, redirecting to: ${mcpInfo.mcpRedirectUri}`);
-                    logger.info(`Callback redirect URL: ${callbackUrl.toString()}?${new URLSearchParams(params)}`);
-                    return res.redirect(`${callbackUrl.toString()}?${new URLSearchParams(params)}`);
-                    // // Exchange code for token with XSUAA using our server's redirect URI
-                    // // (the same one used in the authorization request)
-                    // const tokenResult = await authService.exchangeCodeForToken(code, authService.getRedirectUri(baseUrl));
-
-                    // // Clean up the proxy state
-                    // mcpProxyStates.delete(state);
-
-                    // // Construct the response for MCP Inspector
-                    // const callbackUrl = new URL(mcpInfo.mcpRedirectUri);
-
-                    // // Use fragment-based response (implicit flow style) for better compatibility
-                    // callbackUrl.hash = new URLSearchParams({
-                    //     access_token: tokenResult.access_token,
-                    //     token_type: 'Bearer',
-                    //     expires_in: tokenResult.expires_in.toString(),
-                    //     state: mcpInfo.mcpState || '',
-                    //     ...(tokenResult.refresh_token && { refresh_token: tokenResult.refresh_token })
-                    // }).toString();
-
-                    // logger.info(`MCP Inspector OAuth proxy successful, redirecting to: ${mcpInfo.mcpRedirectUri}`);
-                    // return res.redirect(callbackUrl.toString());
-
-                } catch (error) {
-                    logger.error('MCP Inspector OAuth token exchange failed:', error);
-
-                    // Redirect back to MCP Inspector with error
-                    const errorUrl = new URL(mcpInfo.mcpRedirectUri);
-                    errorUrl.hash = new URLSearchParams({
-                        error: 'server_error',
-                        error_description: error instanceof Error ? error.message : 'Token exchange failed',
-                        state: mcpInfo.mcpState || ''
-                    }).toString();
-
-                    mcpProxyStates.delete(state);
-                    return res.redirect(errorUrl.toString());
-                }
+            if (!mcpInfo) {
+                logger.warn(`MCP state not found for state: ${state}`);
+                return res.status(400).send(`
+                    <html><body style="font-family: sans-serif; text-align: center; padding: 2rem;">
+                        <h1>❌ Authentication Failed</h1>
+                        <p>MCP state not found.</p>
+                        <a href="/oauth/authorize" style="display: inline-block; padding: 0.5rem 1rem; background: #007bff; color: white; text-decoration: none; border-radius: 4px;">Try Again</a>
+                    </body></html>
+                `);
             }
 
-            // Regular OAuth callback (not MCP Inspector proxy)
-            const tokenData = await authService.exchangeCodeForToken(code, authService.getRedirectUri(baseUrl));
+            const callbackUrl = new URL(mcpInfo.mcpRedirectUri);
 
-            // Determine response format
-            if (format === 'json' || acceptHeader.includes('application/json')) {
-                // JSON response for API clients
-                res.json({
-                    access_token: tokenData.access_token,
-                    refresh_token: tokenData.refresh_token,
-                    expires_in: tokenData.expires_in,
-                    message: 'Authentication successful. Use the access token in the Authorization header for API calls.'
-                });
-            } else {
-                // HTML response for browser-based flow (default)
-                const baseUrl = getBaseUrl(req);
-                const expiryTime = new Date(Date.now() + tokenData.expires_in * 1000);
+            // Use fragment-based response (implicit flow style) for better compatibility
+            const params = new URLSearchParams({
+                code,
+                state
+            }).toString();
 
-                res.send(`
-                            <html>
-                            <head><title>SAP MCP Authentication Success</title></head>
-                            <body style="font-family: sans-serif; text-align: center; padding: 2rem;">
-                                <h1>✅ Authentication Successful!</h1>
-                                <p>Your access token:</p>
-                                <div style="background: #f8f9fa; padding: 1rem; border-radius: 4px; word-break: break-all; margin: 1rem 0;">
-                                    <code>${tokenData.access_token}</code>
-                                </div>
-                                <p>Token expires in: ${Math.floor(tokenData.expires_in / 60)} minutes</p>
-                                <div style="margin-top: 2rem;">
-                                    <button onclick="navigator.clipboard.writeText('${tokenData.access_token}'); alert('Token copied!')" 
-                                            style="padding: 0.5rem 1rem; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer;">📋 Copy Token</button>
-                                    <a href="/oauth/inspector?token=${encodeURIComponent(tokenData.access_token)}" 
-                                       style="display: inline-block; margin-left: 0.5rem; padding: 0.5rem 1rem; background: #007bff; color: white; text-decoration: none; border-radius: 4px;">🚀 Launch MCP Inspector</a>
-                                </div>
-                                <script>
-                                    // Store token data for immediate use
-                                    window.tokenData = ${JSON.stringify(tokenData)};
-                                    window.baseUrl = '${baseUrl}';
-                                </script>
-                            </body>
-                            </html>
-                        `);
-            }
+            logger.info(`MCP Inspector OAuth proxy successful, redirecting to: ${mcpInfo.mcpRedirectUri}`);
+            logger.info(`Callback redirect URL: ${callbackUrl.toString()}?${new URLSearchParams(params)}`);
+            return res.redirect(`${callbackUrl.toString()}?${new URLSearchParams(params)}`);
+
+
         } catch (error) {
             logger.error('OAuth callback failed:', error);
 
@@ -1111,90 +950,10 @@ export function createApp(): express.Application {
             }
 
             const tokenData = await authService.refreshAccessToken(refreshToken);
-            res.json({
-                accessToken: tokenData.accessToken,
-                expiresIn: tokenData.expiresIn
-            });
+            res.json(tokenData);
         } catch (error) {
             logger.error('Token refresh failed:', error);
             res.status(401).json({ error: 'Token refresh failed' });
-        }
-    });
-
-    // User info endpoint
-    app.get('/oauth/userinfo', authService.authenticateJWT() as express.RequestHandler, (req, res) => {
-        const authReq = req as AuthRequest;
-        if (!authReq.authInfo) {
-            return res.status(401).json({ error: 'Not authenticated' });
-        }
-
-        const userInfo = authService.getUserInfo(authReq.authInfo);
-        res.json(userInfo);
-    });
-
-    // OAuth status and management endpoint
-    app.get('/oauth/status', async (req, res) => {
-        try {
-            const baseUrl = getBaseUrl(req);
-            console.log('Generating OAuth status for baseUrl:', baseUrl);
-            const format = req.query.format as string || 'html';
-            const token = req.query.token as string || req.headers.authorization?.replace('Bearer ', '');
-
-            if (!authService.isConfigured()) {
-                const errorResponse = {
-                    error: 'OAuth not configured',
-                    message: 'XSUAA service is not configured for this deployment',
-                    setup_required: 'Bind XSUAA service to this application'
-                };
-
-                if (format === 'json' || req.headers.accept?.includes('application/json')) {
-                    return res.status(501).json(errorResponse);
-                } else {
-                    return res.status(501).send(`
-                        <html><body style="font-family: sans-serif; text-align: center; padding: 2rem;">
-                            <h1>❌ OAuth Not Configured</h1>
-                            <p>${errorResponse.message}</p>
-                            <p><strong>Setup Required:</strong> ${errorResponse.setup_required}</p>
-                        </body></html>
-                    `);
-                }
-            }
-
-            // Create integration status
-            const oauthIntegrationService = new OAuthIntegrationService(authService, logger);
-            const integrationStatus = await oauthIntegrationService.createIntegrationStatus(baseUrl, token);
-
-            if (format === 'json' || req.headers.accept?.includes('application/json')) {
-                res.json(integrationStatus);
-            } else {
-                // Generate HTML dashboard
-                const tokenStatus = 'token_status' in integrationStatus ? integrationStatus.token_status : undefined;
-                const tokenDisplay = token && tokenStatus ? oauthIntegrationService.generateTokenDisplayHTML(token, tokenStatus, baseUrl) : '';
-                const connectionInstructions = 'connection_instructions' in integrationStatus ? integrationStatus.connection_instructions : {};
-
-                const htmlContent = renderOAuthStatusTemplate(integrationStatus, tokenDisplay, connectionInstructions, baseUrl);
-                res.send(htmlContent);
-            }
-
-        } catch (error) {
-            logger.error('Error generating OAuth status:', error);
-
-            const errorResponse = {
-                error: 'Status generation failed',
-                message: error instanceof Error ? error.message : 'Unknown error'
-            };
-
-            if (req.query.format === 'json' || req.headers.accept?.includes('application/json')) {
-                res.status(500).json(errorResponse);
-            } else {
-                res.status(500).send(`
-                    <html><body style="font-family: sans-serif; text-align: center; padding: 2rem;">
-                        <h1>❌ Status Generation Failed</h1>
-                        <p>Error: ${errorResponse.message}</p>
-                        <a href="/oauth/authorize" class="btn btn-primary">Try Authentication</a>
-                    </body></html>
-                `);
-            }
         }
     });
 
@@ -1215,8 +974,7 @@ export function createApp(): express.Application {
                 'GET /oauth/.well-known/oauth_metadata': 'Custom OAuth metadata with MCP integration info',
                 'GET /oauth/authorize': 'Initiate OAuth authorization flow',
                 'GET /oauth/callback': 'OAuth authorization callback',
-                'POST /oauth/refresh': 'Refresh access tokens',
-                'GET /oauth/userinfo': 'Get authenticated user information'
+                'POST /oauth/refresh': 'Refresh access tokens'
             },
             mcpCapabilities: {
                 tools: 'Dynamic CRUD operations for all discovered SAP entities',

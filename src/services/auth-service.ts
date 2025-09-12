@@ -59,8 +59,6 @@ export class AuthService {
         if (!this.xsuaaCredentials) {
             throw new Error('XSUAA service not configured');
         }
-        console.log('Redirect URI 1:', redirectUri);
-        console.log('Redirect URI 2:', this.getRedirectUri());
         const tokenUrl = `${this.xsuaaCredentials.url}/oauth/token`;
         const params = new URLSearchParams({
             grant_type: 'authorization_code',
@@ -125,11 +123,7 @@ export class AuthService {
             }
 
             const tokenData = await response.json();
-            return {
-                accessToken: tokenData.access_token,
-                refreshToken: tokenData.refresh_token,
-                expiresIn: tokenData.expires_in
-            };
+            return tokenData;
         } catch (error) {
             this.logger.error('Failed to refresh token:', error);
             throw error;
