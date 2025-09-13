@@ -16,6 +16,17 @@ import { ODataService } from './types/sap-types.js';
 import { ServiceDiscoveryConfigService } from './services/service-discovery-config.js';
 import { AuthService, AuthRequest } from './services/auth-service.js';
 
+// Global type extensions
+declare global {
+    var mcpProxyStates: Map<string, {
+        mcpRedirectUri: string;
+        state: string;
+        mcpCodeChallenge?: string;
+        mcpCodeChallengeMethod?: string;
+        timestamp: number;
+    }>;
+}
+
 // Helper function to get the correct base URL from request
 function getBaseUrl(req: express.Request): string {
     const protocol = req.get('x-forwarded-proto') || req.protocol;
@@ -25,7 +36,7 @@ function getBaseUrl(req: express.Request): string {
 
 /**
  * Modern Express server hosting SAP MCP Server with session management
- * 
+ *
  * This server provides HTTP transport for the SAP MCP server using the
  * latest streamable HTTP transport with proper session management.
  */
@@ -186,7 +197,7 @@ export function createApp(): express.Application {
         const isAuthenticated = !!authReq.authInfo;
         const baseUrl = getBaseUrl(req);
         // Build authentication-aware response
-        const serverInfo: any = {
+        const serverInfo = {
             name: 'btp-sap-odata-to-mcp-server',
             version: '2.0.0',
             description: 'Modern MCP server for SAP OData services with dynamic CRUD operations and OAuth authentication',
@@ -414,7 +425,7 @@ export function createApp(): express.Application {
             }
 
             const xsuaaMetadata = authService.getXSUAADiscoveryMetadata()!;
-            const appScopes = authService.getApplicationScopes();
+            // const appScopes = authService.getApplicationScopes();
             const baseUrl = getBaseUrl(req);
             const discoveryMetadata = {
                 // Core OAuth 2.0 Authorization Server Metadata
@@ -558,6 +569,8 @@ export function createApp(): express.Application {
                     message: 'XSUAA service credentials not available'
                 });
             }
+            // Use xsuaaCredentials variable
+            void xsuaaCredentials;
 
             // Get client credentials including secret (sensitive operation)
             const clientCredentials = authService.getClientCredentials();
@@ -638,7 +651,7 @@ export function createApp(): express.Application {
                 });
             }
 
-            const xsuaaCredentials = authService.getServiceInfo();
+            // const xsuaaCredentials = authService.getServiceInfo();
             const baseUrl = getBaseUrl(req);
 
             // Return minimal client information for GET requests
@@ -675,7 +688,7 @@ export function createApp(): express.Application {
         try {
             const baseUrl = getBaseUrl(req);
             const xsuaaInfo = authService.getServiceInfo();
-            const appScopes = authService.getApplicationScopes();
+            // const appScopes = authService.getApplicationScopes();
 
             if (!xsuaaInfo) {
                 return res.status(501).json({
@@ -798,10 +811,10 @@ export function createApp(): express.Application {
 
 
             // Store mapping in a simple in-memory store (you might want to use Redis in production)
-            if (!(global as any).mcpProxyStates) {
-                (global as any).mcpProxyStates = new Map();
+            if (!globalThis.mcpProxyStates) {
+                globalThis.mcpProxyStates = new Map();
             }
-            (global as any).mcpProxyStates.set(state, {
+            globalThis.mcpProxyStates.set(state, {
                 mcpRedirectUri,
                 state,
                 mcpCodeChallenge,
@@ -810,9 +823,9 @@ export function createApp(): express.Application {
             });
 
             // Clean up old states (older than 10 minutes)
-            for (const [key, value] of (global as any).mcpProxyStates.entries()) {
+            for (const [key, value] of globalThis.mcpProxyStates.entries()) {
                 if (Date.now() - value.timestamp > 600000) {
-                    (global as any).mcpProxyStates.delete(key);
+                    globalThis.mcpProxyStates.delete(key);
                 }
             }
 
@@ -893,10 +906,10 @@ export function createApp(): express.Application {
             }
 
             // Check if this is a MCP Inspector proxy callback
-            const mcpProxyStates = (global as any).mcpProxyStates;
+            const mcpProxyStates = globalThis.mcpProxyStates;
             const mcpInfo = state && mcpProxyStates?.get(state);
 
-            const baseUrl = getBaseUrl(req);
+            // const baseUrl = getBaseUrl(req);
             if (!mcpInfo) {
                 logger.warn(`MCP state not found for state: ${state}`);
                 return res.status(400).send(`

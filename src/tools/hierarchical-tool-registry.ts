@@ -6,14 +6,14 @@ import { z } from "zod";
 
 /**
  * Hierarchical Tool Registry - Solves the "tool explosion" problem
- * 
+ *
  * Instead of registering hundreds of CRUD tools upfront (5 ops × 40+ entities × services),
  * this registry uses a hierarchical discovery approach with just 4 smart tools:
  * 1. search-sap-services - Find relevant services by category/keyword
  * 2. discover-service-entities - Show entities within a specific service
  * 3. get-entity-schema - Get detailed schema for an entity
  * 4. execute-entity-operation - Perform CRUD operations on any entity
- * 
+ *
  * This reduces Claude's context from 200+ tools to just 4, solving token overflow.
  */
 export class HierarchicalSAPToolRegistry {
@@ -194,7 +194,7 @@ export class HierarchicalSAPToolRegistry {
 
             // Filter by category first
             if (category && category !== "all") {
-                filteredServices = filteredServices.filter(service => 
+                filteredServices = filteredServices.filter(service =>
                     this.serviceCategories.get(service.id)?.includes(category)
                 );
             }
@@ -232,7 +232,7 @@ export class HierarchicalSAPToolRegistry {
             if (query) responseText += ` matching "${query}"`;
             if (category !== "all") responseText += ` in category "${category}"`;
             responseText += `:\n\n${JSON.stringify(result, null, 2)}`;
-            
+
             if (result.services.length > 0) {
                 responseText += `\n\n📋 Next step: Use 'discover-service-entities' with a serviceId to see what entities are available in a specific service.`;
             } else {
@@ -482,7 +482,7 @@ export class HierarchicalSAPToolRegistry {
                     operationDescription = `Reading ${entityName} entities`;
                     if (queryOptions.$top) operationDescription += ` (top ${queryOptions.$top})`;
                     if (queryOptions.$filter) operationDescription += ` with filter: ${queryOptions.$filter}`;
-                    
+
                     response = await this.sapClient.readEntitySet(service.url, entityType.entitySet!, queryOptions, false);
                     break;
 
@@ -557,7 +557,7 @@ export class HierarchicalSAPToolRegistry {
      */
     private buildKeyValue(entityType: EntityType, parameters: Record<string, unknown>): string {
         const keyProperties = entityType.properties.filter(p => entityType.keys.includes(p.name));
-        
+
         if (keyProperties.length === 1) {
             const keyName = keyProperties[0].name;
             if (!(keyName in parameters)) {
@@ -711,7 +711,7 @@ export class HierarchicalSAPToolRegistry {
                         audit_trail: 'All operations logged under user identity'
                     }
                 };
-                
+
                 return {
                     contents: [{
                         uri: uri.href,
@@ -824,7 +824,7 @@ You have access to 4 hierarchical discovery tools:
 - Explain that discovery uses technical user, operations use their credentials
 
 ### Query Optimization:
-- Use OData query options (\$filter, \$select, \$top) to limit data
+- Use OData query options ($filter, $select, $top) to limit data
 - Encourage filtering to avoid large result sets
 - Show users how to construct proper OData filters
 

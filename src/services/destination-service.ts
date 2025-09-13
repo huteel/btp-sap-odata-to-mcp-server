@@ -36,9 +36,9 @@ export class DestinationService {
      * Get destination for API discovery (uses technical user)
      */
     async getDiscoveryDestination(): Promise<HttpDestination> {
-        const destinationName = this.config.get('sap.discoveryDestinationName', 
+        const destinationName = this.config.get('sap.discoveryDestinationName',
             this.config.get('sap.destinationName', 'SAP_SYSTEM'));
-        
+
         this.logger.debug(`Fetching discovery destination: ${destinationName}`);
         return this.getDestination(destinationName, undefined);
     }
@@ -47,9 +47,9 @@ export class DestinationService {
      * Get destination for API execution (uses JWT token if provided)
      */
     async getExecutionDestination(jwtToken?: string): Promise<HttpDestination> {
-        const destinationName = this.config.get('sap.executionDestinationName', 
+        const destinationName = this.config.get('sap.executionDestinationName',
             this.config.get('sap.destinationName', 'SAP_SYSTEM'));
-        
+
         this.logger.debug(`Fetching execution destination: ${destinationName}`);
         return this.getDestination(destinationName, jwtToken);
     }
@@ -66,7 +66,7 @@ export class DestinationService {
      */
     private async getDestination(destinationName: string, jwtToken?: string): Promise<HttpDestination> {
         this.logger.debug(`Fetching destination: ${destinationName} ${jwtToken ? 'with JWT' : 'without JWT'}`);
-        
+
         try {
             // First try environment variables (for local development)
             const envDestinations = process.env.destinations;

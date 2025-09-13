@@ -57,10 +57,10 @@ export class SAPClient {
         isDiscovery?: boolean;
     }) {
         // Use discovery destination for metadata/discovery calls, execution destination for data operations
-        const destination = options.isDiscovery 
+        const destination = options.isDiscovery
             ? await this.getDiscoveryDestination()
             : await this.getExecutionDestination();
-        
+
         const requestOptions = {
             method: options.method,
             url: options.url,
@@ -74,16 +74,16 @@ export class SAPClient {
 
         try {
             this.logger.debug(`Executing ${options.method} request to ${options.url}`);
-            
+
             if (!destination.url) {
                 throw new Error('Destination URL is not configured');
             }
-            
-            const response = await executeHttpRequest(destination as HttpDestination, requestOptions); 
-            
+
+            const response = await executeHttpRequest(destination as HttpDestination, requestOptions);
+
             this.logger.debug(`Request completed successfully`);
             return response;
-            
+
         } catch (error) {
             this.logger.error(`Request failed:`, error);
             throw this.handleError(error);
@@ -99,7 +99,7 @@ export class SAPClient {
         $skip?: number;
     }, isDiscovery = false) {
         let url = `${servicePath}${entitySet}`;
-        
+
         if (queryOptions) {
             const params = new URLSearchParams();
             Object.entries(queryOptions).forEach(([key, value]) => {
@@ -107,7 +107,7 @@ export class SAPClient {
                     params.set(key, String(value));
                 }
             });
-            
+
             if (params.toString()) {
                 url += `?${params.toString()}`;
             }
@@ -122,7 +122,7 @@ export class SAPClient {
 
     async readEntity(servicePath: string, entitySet: string, key: string, isDiscovery = false) {
         const url = `${servicePath}${entitySet}('${key}')`;
-        
+
         return this.executeRequest({
             method: 'GET',
             url,
@@ -132,7 +132,7 @@ export class SAPClient {
 
     async createEntity(servicePath: string, entitySet: string, data: unknown) {
         const url = `${servicePath}${entitySet}`;
-        
+
         return this.executeRequest({
             method: 'POST',
             url,
@@ -142,7 +142,7 @@ export class SAPClient {
 
     async updateEntity(servicePath: string, entitySet: string, key: string, data: unknown) {
         const url = `${servicePath}${entitySet}('${key}')`;
-        
+
         return this.executeRequest({
             method: 'PATCH',
             url,
@@ -152,7 +152,7 @@ export class SAPClient {
 
     async deleteEntity(servicePath: string, entitySet: string, key: string) {
         const url = `${servicePath}${entitySet}('${key}')`;
-        
+
         return this.executeRequest({
             method: 'DELETE',
             url

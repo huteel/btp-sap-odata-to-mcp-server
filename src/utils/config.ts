@@ -16,13 +16,13 @@ export class Config {
         this.config.set('request.retries', parseInt(process.env.REQUEST_RETRIES || '3'));
         this.config.set('log.level', process.env.LOG_LEVEL || 'info');
         this.config.set('node.env', process.env.NODE_ENV || 'development');
-        
+
         // OAuth configuration
         // this.config.set('oauth.redirectBaseUrl', process.env.OAUTH_REDIRECT_BASE_URL || 'http://localhost:3000');
-        
+
         // OData service discovery configuration
         this.loadODataServiceConfig();
-        
+
         // Load from VCAP services if available
         try {
             xsenv.loadEnv();
@@ -36,7 +36,7 @@ export class Config {
     private loadODataServiceConfig(): void {
         // OData service filtering configuration
         // Can be set via environment variables or will use defaults
-        
+
         // Service patterns - supports glob patterns and regex
         const servicePatterns = process.env.ODATA_SERVICE_PATTERNS;
         if (servicePatterns) {
@@ -68,10 +68,10 @@ export class Config {
 
         // Allow all services flag - if true, ignores patterns and includes all
         this.config.set('odata.allowAllServices', process.env.ODATA_ALLOW_ALL === 'true' || process.env.ODATA_ALLOW_ALL === '*');
-        
+
         // Discovery mode: 'all', 'whitelist', 'regex'
         this.config.set('odata.discoveryMode', process.env.ODATA_DISCOVERY_MODE || 'whitelist');
-        
+
         // Maximum services to discover (prevents overwhelming the system)
         this.config.set('odata.maxServices', parseInt(process.env.ODATA_MAX_SERVICES || '50'));
     }

@@ -20,13 +20,13 @@ declare module '@sap/xssec' {
 
     export function createSecurityContext(
         token: string,
-        xsuaaCredentials: any,
+        xsuaaCredentials: Record<string, unknown>,
         callback: (error: Error | null, securityContext?: SecurityContext) => void
     ): void;
 
     export function createSecurityContext(
         token: string,
-        xsuaaCredentials: any
+        xsuaaCredentials: Record<string, unknown>
     ): Promise<SecurityContext>;
 
     export interface XsuaaCredentials {

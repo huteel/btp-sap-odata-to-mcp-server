@@ -43,7 +43,7 @@ export class SAPDiscoveryService {
             // Apply maximum service limit
             const maxServices = this.config.getMaxServices();
             const limitedServices = filteredServices.slice(0, maxServices);
-            
+
             if (filteredServices.length > maxServices) {
                 this.logger.warn(`Service discovery limited to ${maxServices} services (configured maximum). ${filteredServices.length - maxServices} services were excluded.`);
             }
@@ -72,7 +72,7 @@ export class SAPDiscoveryService {
      */
     private filterServices(services: ODataService[]): ODataService[] {
         const allowAll = this.config.get('odata.allowAllServices', false);
-        
+
         if (allowAll) {
             this.logger.info('All services allowed - no filtering applied');
             return services;
@@ -237,10 +237,10 @@ export class SAPDiscoveryService {
                 name: node.getAttribute("Name") || '',
                 namespace: node.parentElement?.getAttribute("Namespace") || '',
                 entitySet:entitySet?.name,
-                creatable: (entitySet?.creatable?.toLowerCase() === "true"), 
-                updatable: (entitySet?.updatable?.toLowerCase() === "true"), 
-                deletable: (entitySet?.deletable?.toLowerCase() === "true"), 
-                addressable: (entitySet?.addressable?.toLowerCase() === "true"), 
+                creatable: (entitySet?.creatable?.toLowerCase() === "true"),
+                updatable: (entitySet?.updatable?.toLowerCase() === "true"),
+                deletable: (entitySet?.deletable?.toLowerCase() === "true"),
+                addressable: (entitySet?.addressable?.toLowerCase() === "true"),
                 properties: [],
                 navigationProperties: [],
                 keys: []

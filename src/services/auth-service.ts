@@ -10,7 +10,7 @@ export interface AuthRequest extends Request {
 }
 
 export class AuthService {
-    private xsuaaCredentials: any;
+    private xsuaaCredentials: Record<string, unknown> | null = null;
     private logger: Logger;
     private config: Config;
 
@@ -26,9 +26,9 @@ export class AuthService {
             const services = xsenv.getServices({
                 xsuaa: { label: 'xsuaa' }
             });
-            this.xsuaaCredentials = services.xsuaa;
+            this.xsuaaCredentials = services.xsuaa as Record<string, unknown>;
             this.logger.info('XSUAA service initialized successfully');
-        } catch (error) {
+        } catch {
             this.logger.warn('XSUAA service not found in VCAP_SERVICES, OAuth will be disabled');
             this.xsuaaCredentials = null;
         }
@@ -42,14 +42,15 @@ export class AuthService {
             throw new Error('XSUAA service not configured');
         }
 
+        const creds = this.xsuaaCredentials as Record<string, string>;
         const params = new URLSearchParams({
             response_type: 'code',
-            client_id: this.xsuaaCredentials.clientid,
+            client_id: creds.clientid,
             redirect_uri: this.getRedirectUri(requestUrl),
             ...(state && { state })
         });
 
-        return `${this.xsuaaCredentials.url}/oauth/authorize?${params.toString()}`;
+        return `${creds.url}/oauth/authorize?${params.toString()}`;
     }
 
     /**
@@ -59,12 +60,13 @@ export class AuthService {
         if (!this.xsuaaCredentials) {
             throw new Error('XSUAA service not configured');
         }
-        const tokenUrl = `${this.xsuaaCredentials.url}/oauth/token`;
+        const creds = this.xsuaaCredentials as Record<string, string>;
+        const tokenUrl = `${creds.url}/oauth/token`;
         const params = new URLSearchParams({
             grant_type: 'authorization_code',
             code,
-            client_id: this.xsuaaCredentials.clientid,
-            client_secret: this.xsuaaCredentials.clientsecret,
+            client_id: creds.clientid,
+            client_secret: creds.clientsecret,
             redirect_uri: redirectUri || this.getRedirectUri()
         });
 
@@ -99,12 +101,13 @@ export class AuthService {
             throw new Error('XSUAA service not configured');
         }
 
-        const tokenUrl = `${this.xsuaaCredentials.url}/oauth/token`;
+        const creds = this.xsuaaCredentials as Record<string, string>;
+        const tokenUrl = `${creds.url}/oauth/token`;
         const params = new URLSearchParams({
             grant_type: 'refresh_token',
             refresh_token: refreshToken,
-            client_id: this.xsuaaCredentials.clientid,
-            client_secret: this.xsuaaCredentials.clientsecret
+            client_id: creds.clientid,
+            client_secret: creds.clientsecret
         });
 
         try {
@@ -139,7 +142,7 @@ export class AuthService {
         }
 
         return new Promise((resolve, reject) => {
-            xssec.createSecurityContext(token, this.xsuaaCredentials, (error: Error | null, securityContext?: xssec.SecurityContext) => {
+            xssec.createSecurityContext(token, this.xsuaaCredentials as Record<string, unknown>, (error: Error | null, securityContext?: xssec.SecurityContext) => {
                 if (error) {
                     this.logger.error('Token validation failed:', error);
                     reject(error);
@@ -172,7 +175,7 @@ export class AuthService {
             const authHeader = req.headers.authorization;
             if (!authHeader || !authHeader.startsWith('Bearer ')) {
                 const baseUrl = `${req.protocol}://${req.get('host')}`;
-                return res.status(401).json({ 
+                return res.status(401).json({
                     error: 'Authentication Required',
                     message: 'This SAP OData MCP server requires OAuth 2.0 authentication',
                     authentication: {
@@ -212,7 +215,7 @@ export class AuthService {
             } catch (error) {
                 this.logger.error('Authentication failed:', error);
                 const baseUrl = `${req.protocol}://${req.get('host')}`;
-                return res.status(401).json({ 
+                return res.status(401).json({
                     error: 'Token Validation Failed',
                     message: 'The provided JWT token is invalid or expired',
                     details: error instanceof Error ? error.message : 'Token validation error',
@@ -230,7 +233,7 @@ export class AuthService {
                         token_info: {
                             typical_lifetime: '1 hour',
                             refresh_lifetime: '24 hours',
-                            issuer: this.xsuaaCredentials?.url || 'SAP XSUAA Service'
+                            issuer: (this.xsuaaCredentials as Record<string, string>)?.url || 'SAP XSUAA Service'
                         }
                     }
                 });
@@ -260,10 +263,10 @@ export class AuthService {
                 req.authInfo = securityContext;
                 req.jwtToken = token;
                 this.logger.debug(`Optional auth: Request authenticated for user: ${securityContext.getUserName()}`);
-            } catch (error) {
+            } catch {
                 this.logger.debug('Optional auth: Token validation failed, continuing without auth');
             }
-            
+
             next();
         };
     }
@@ -310,22 +313,23 @@ export class AuthService {
             return null;
         }
 
+        const creds = this.xsuaaCredentials as Record<string, string>;
         return {
-            issuer: this.xsuaaCredentials.url,
-            clientId: this.xsuaaCredentials.clientid,
-            xsappname: this.xsuaaCredentials.xsappname,
-            identityZone: this.xsuaaCredentials.identityzone,
-            tenantId: this.xsuaaCredentials.tenantid,
-            tenantMode: this.xsuaaCredentials.tenantmode,
+            issuer: creds.url,
+            clientId: creds.clientid,
+            xsappname: creds.xsappname,
+            identityZone: creds.identityzone,
+            tenantId: creds.tenantid,
+            tenantMode: creds.tenantmode,
             endpoints: {
-                authorization: `${this.xsuaaCredentials.url}/oauth/authorize`,
-                token: `${this.xsuaaCredentials.url}/oauth/token`,
-                userinfo: `${this.xsuaaCredentials.url}/userinfo`,
-                jwks: `${this.xsuaaCredentials.url}/token_keys`,
-                introspection: `${this.xsuaaCredentials.url}/oauth/introspect`,
-                revocation: `${this.xsuaaCredentials.url}/oauth/revoke`
+                authorization: `${creds.url}/oauth/authorize`,
+                token: `${creds.url}/oauth/token`,
+                userinfo: `${creds.url}/userinfo`,
+                jwks: `${creds.url}/token_keys`,
+                introspection: `${creds.url}/oauth/introspect`,
+                revocation: `${creds.url}/oauth/revoke`
             },
-            verificationKey: this.xsuaaCredentials.verificationkey
+            verificationKey: creds.verificationkey
         };
     }
 
@@ -333,11 +337,12 @@ export class AuthService {
      * Get application-specific scopes from xs-security.json configuration
      */
     getApplicationScopes(): string[] {
-        if (!this.xsuaaCredentials?.xsappname) {
+        const creds = this.xsuaaCredentials as Record<string, string>;
+        if (!creds?.xsappname) {
             return [];
         }
 
-        const appName = this.xsuaaCredentials.xsappname;
+        const appName = creds.xsappname;
         return [
             `${appName}.read`,
             `${appName}.write`,
@@ -353,13 +358,14 @@ export class AuthService {
             return null;
         }
 
+        const creds = this.xsuaaCredentials as Record<string, string>;
         return {
-            url: this.xsuaaCredentials.url,
-            clientId: this.xsuaaCredentials.clientid,
-            xsappname: this.xsuaaCredentials.xsappname,
-            identityZone: this.xsuaaCredentials.identityzone,
-            tenantId: this.xsuaaCredentials.tenantid,
-            tenantMode: this.xsuaaCredentials.tenantmode,
+            url: creds.url,
+            clientId: creds.clientid,
+            xsappname: creds.xsappname,
+            identityZone: creds.identityzone,
+            tenantId: creds.tenantid,
+            tenantMode: creds.tenantmode,
             // Don't expose sensitive credentials
             configured: true
         };
@@ -374,12 +380,13 @@ export class AuthService {
             return null;
         }
 
+        const creds = this.xsuaaCredentials as Record<string, string>;
         return {
-            client_id: this.xsuaaCredentials.clientid,
-            client_secret: this.xsuaaCredentials.clientsecret,
-            url: this.xsuaaCredentials.url,
-            identityZone: this.xsuaaCredentials.identityzone,
-            tenantMode: this.xsuaaCredentials.tenantmode
+            client_id: creds.clientid,
+            client_secret: creds.clientsecret,
+            url: creds.url,
+            identityZone: creds.identityzone,
+            tenantMode: creds.tenantmode
         };
     }
 }
