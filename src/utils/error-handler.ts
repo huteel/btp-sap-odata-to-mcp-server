@@ -35,12 +35,12 @@ export class ErrorHandler {
                 default: return 'HttpError';
             }
         }
-        
+
         if (err.code) {
             if (err.code.includes('TIMEOUT')) return 'Timeout';
             if (err.code.includes('CONNECTION')) return 'Connection';
         }
-        
+
         return 'Unknown';
     }
 }

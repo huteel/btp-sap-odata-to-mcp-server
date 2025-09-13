@@ -6,8 +6,9 @@ import { Config } from '../utils/config.js';
 
 
 export class SAPClient {
-    private destination: HttpDestination | null = null;
+    private discoveryDestination: HttpDestination | null = null;
     private config: Config;
+    private currentUserToken?: string;
 
     constructor(
         private destinationService: DestinationService,
@@ -16,11 +17,36 @@ export class SAPClient {
         this.config = new Config();
     }
 
-    async getDestination(): Promise<HttpDestination> {
-        if (!this.destination) {
-            this.destination = await this.destinationService.getSAPDestination();
+    /**
+     * Set the current user's JWT token for subsequent operations
+     */
+    setUserToken(token?: string) {
+        this.currentUserToken = token;
+        this.logger.debug(`User token ${token ? 'set' : 'cleared'} for SAP client`);
+    }
+
+    /**
+     * Get destination for discovery operations (technical user)
+     */
+    async getDiscoveryDestination(): Promise<HttpDestination> {
+        if (!this.discoveryDestination) {
+            this.discoveryDestination = await this.destinationService.getDiscoveryDestination();
         }
-        return this.destination;
+        return this.discoveryDestination;
+    }
+
+    /**
+     * Get destination for execution operations (with JWT if available)
+     */
+    async getExecutionDestination(): Promise<HttpDestination> {
+        return await this.destinationService.getExecutionDestination(this.currentUserToken);
+    }
+
+    /**
+     * Legacy method - defaults to discovery destination
+     */
+    async getDestination(): Promise<HttpDestination> {
+        return this.getDiscoveryDestination();
     }
 
     async executeRequest(options: {
@@ -28,9 +54,13 @@ export class SAPClient {
         method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
         data?: unknown;
         headers?: Record<string, string>;
+        isDiscovery?: boolean;
     }) {
-        const destination = await this.getDestination();
-        
+        // Use discovery destination for metadata/discovery calls, execution destination for data operations
+        const destination = options.isDiscovery
+            ? await this.getDiscoveryDestination()
+            : await this.getExecutionDestination();
+
         const requestOptions = {
             method: options.method,
             url: options.url,
@@ -44,16 +74,16 @@ export class SAPClient {
 
         try {
             this.logger.debug(`Executing ${options.method} request to ${options.url}`);
-            
+
             if (!destination.url) {
                 throw new Error('Destination URL is not configured');
             }
-            
-            const response = await executeHttpRequest(destination as HttpDestination, requestOptions); 
-            
+
+            const response = await executeHttpRequest(destination as HttpDestination, requestOptions);
+
             this.logger.debug(`Request completed successfully`);
             return response;
-            
+
         } catch (error) {
             this.logger.error(`Request failed:`, error);
             throw this.handleError(error);
@@ -67,9 +97,9 @@ export class SAPClient {
         $orderby?: string;
         $top?: number;
         $skip?: number;
-    }) {
+    }, isDiscovery = false) {
         let url = `${servicePath}${entitySet}`;
-        
+
         if (queryOptions) {
             const params = new URLSearchParams();
             Object.entries(queryOptions).forEach(([key, value]) => {
@@ -77,7 +107,7 @@ export class SAPClient {
                     params.set(key, String(value));
                 }
             });
-            
+
             if (params.toString()) {
                 url += `?${params.toString()}`;
             }
@@ -85,22 +115,24 @@ export class SAPClient {
 
         return this.executeRequest({
             method: 'GET',
-            url
+            url,
+            isDiscovery
         });
     }
 
-    async readEntity(servicePath: string, entitySet: string, key: string) {
+    async readEntity(servicePath: string, entitySet: string, key: string, isDiscovery = false) {
         const url = `${servicePath}${entitySet}('${key}')`;
-        
+
         return this.executeRequest({
             method: 'GET',
-            url
+            url,
+            isDiscovery
         });
     }
 
     async createEntity(servicePath: string, entitySet: string, data: unknown) {
         const url = `${servicePath}${entitySet}`;
-        
+
         return this.executeRequest({
             method: 'POST',
             url,
@@ -110,7 +142,7 @@ export class SAPClient {
 
     async updateEntity(servicePath: string, entitySet: string, key: string, data: unknown) {
         const url = `${servicePath}${entitySet}('${key}')`;
-        
+
         return this.executeRequest({
             method: 'PATCH',
             url,
@@ -120,7 +152,7 @@ export class SAPClient {
 
     async deleteEntity(servicePath: string, entitySet: string, key: string) {
         const url = `${servicePath}${entitySet}('${key}')`;
-        
+
         return this.executeRequest({
             method: 'DELETE',
             url

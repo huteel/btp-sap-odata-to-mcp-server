@@ -32,11 +32,43 @@ export class DestinationService {
         }
     }
 
+    /**
+     * Get destination for API discovery (uses technical user)
+     */
+    async getDiscoveryDestination(): Promise<HttpDestination> {
+        const destinationName = this.config.get('sap.discoveryDestinationName',
+            this.config.get('sap.destinationName', 'SAP_SYSTEM'));
+
+        this.logger.debug(`Fetching discovery destination: ${destinationName}`);
+        return this.getDestination(destinationName, undefined);
+    }
+
+    /**
+     * Get destination for API execution (uses JWT token if provided)
+     */
+    async getExecutionDestination(jwtToken?: string): Promise<HttpDestination> {
+        const destinationName = this.config.get('sap.executionDestinationName',
+            this.config.get('sap.destinationName', 'SAP_SYSTEM'));
+
+        this.logger.debug(`Fetching execution destination: ${destinationName}`);
+        return this.getDestination(destinationName, jwtToken);
+    }
+
+    /**
+     * Legacy method for backward compatibility
+     */
     async getSAPDestination(): Promise<HttpDestination> {
-        // Use the same logic as getsapDestination, but update naming
-        const destinationName = this.config.get('sap.destinationName', 'SAP_SYSTEM');
-        this.logger.debug(`Fetching destination: ${destinationName}`);
+        return this.getDiscoveryDestination();
+    }
+
+    /**
+     * Internal method to get destination with optional JWT
+     */
+    private async getDestination(destinationName: string, jwtToken?: string): Promise<HttpDestination> {
+        this.logger.debug(`Fetching destination: ${destinationName} ${jwtToken ? 'with JWT' : 'without JWT'}`);
+
         try {
+            // First try environment variables (for local development)
             const envDestinations = process.env.destinations;
             if (envDestinations) {
                 const destinations = JSON.parse(envDestinations);
@@ -56,10 +88,10 @@ export class DestinationService {
         }
 
         try {
-            // Fallback to SAP Cloud SDK getDestination
+            // Use SAP Cloud SDK getDestination with optional JWT
             const destination = await getDestination({
                 destinationName,
-                jwt: this.getJWT()
+                jwt: jwtToken || this.getJWT()
             });
             if (!destination) {
                 throw new Error(`Destination '${destinationName}' not found in environment variables or BTP destination service`);

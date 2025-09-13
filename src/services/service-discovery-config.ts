@@ -104,7 +104,7 @@ export class ServiceDiscoveryConfigService {
      */
     private generateConfigurationDescription(): string {
         const allowAll = this.config.get('odata.allowAllServices', false);
-        
+
         if (allowAll) {
             return 'All OData services are allowed';
         }

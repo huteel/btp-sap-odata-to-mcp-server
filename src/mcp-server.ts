@@ -19,6 +19,7 @@ export class MCPServer {
     private discoveredServices: ODataService[];
     private mcpServer: McpServer;
     private toolRegistry: HierarchicalSAPToolRegistry | SAPToolRegistry;
+    private userToken?: string;
 
     constructor(discoveredServices: ODataService[]) {
         this.logger = new Logger('mcp-server');
@@ -44,6 +45,18 @@ export class MCPServer {
             this.toolRegistry = new HierarchicalSAPToolRegistry(this.mcpServer, this.sapClient, this.logger, this.discoveredServices);
             this.logger.info('Using HierarchicalSAPToolRegistry for MCP tool exposure');
         }
+    }
+
+    /**
+     * Set the user's JWT token for authenticated operations
+     */
+    setUserToken(token?: string): void {
+        this.userToken = token;
+        if (this.toolRegistry instanceof HierarchicalSAPToolRegistry) {
+            this.toolRegistry.setUserToken(token);
+        }
+        // Note: SAPToolRegistry doesn't support user tokens yet
+        this.logger.debug(`User token ${token ? 'set' : 'cleared'} for MCP server`);
     }
 
     async initialize(): Promise<void> {
@@ -87,8 +100,11 @@ export class MCPServer {
     }
 }
 
-export async function createMCPServer(discoveredServices: ODataService[]): Promise<MCPServer> {
+export async function createMCPServer(discoveredServices: ODataService[], userToken?: string): Promise<MCPServer> {
     const server = new MCPServer(discoveredServices);
+    if (userToken) {
+        server.setUserToken(userToken);
+    }
     await server.initialize();
     return server;
 }
