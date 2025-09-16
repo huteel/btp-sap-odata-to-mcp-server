@@ -850,8 +850,13 @@ export function createApp(): express.Application {
                     message: 'XSUAA service is not configured for this deployment'
                 });
             }
-
-            const tokenData = await authService.exchangeCodeForToken(req.body.code, authService.getRedirectUri(baseUrl));
+            let tokenData;
+            if (req?.body?.code) {
+                tokenData = await authService.exchangeCodeForToken(req.body.code, authService.getRedirectUri(baseUrl));
+            }
+            if (req?.body?.refresh_token) {
+                tokenData = await authService.refreshAccessToken(req.body.refresh_token);
+            }
 
             logger.info(`OAuth token exchange successful`);
             res.json(tokenData);

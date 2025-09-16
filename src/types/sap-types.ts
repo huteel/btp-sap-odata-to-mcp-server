@@ -13,7 +13,7 @@ export interface ODataService {
 
 export interface ServiceMetadata {
     entityTypes: EntityType[];
-    entitySets: Array<{ [key: string]: string | null }>;
+    entitySets: Array<{ [key: string]: string | boolean | null }>;
     version: string;
     namespace: string;
 }

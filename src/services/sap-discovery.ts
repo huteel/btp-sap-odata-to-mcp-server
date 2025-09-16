@@ -5,6 +5,7 @@ import { Config } from '../utils/config.js';
 import { ODataService, EntityType, ServiceMetadata } from '../types/sap-types.js';
 
 import { JSDOM } from 'jsdom';
+import { tr } from 'zod/v4/locales';
 
 export class SAPDiscoveryService {
     private catalogEndpoints = [
@@ -227,20 +228,20 @@ export class SAPDiscoveryService {
         };
     }
 
-    private extractEntityTypes(xmlDoc: Document, entitySets: Array<{ [key: string]: string | null }>): EntityType[] {
+    private extractEntityTypes(xmlDoc: Document, entitySets: Array<{ [key: string]: string | boolean | null }>): EntityType[] {
         const entityTypes: EntityType[] = [];
         const nodes = xmlDoc.querySelectorAll("EntityType");
 
     nodes.forEach((node: Element) => {
-            const entitySet = entitySets.find(entitySet=>entitySet.entitytype?.split(".")[1] === node.getAttribute("Name"));
-            const entityType: EntityType = {
+            const entitySet = entitySets.find(entitySet=>(entitySet.entitytype as string)?.split(".")[1] === node.getAttribute("Name"));
+            const entityType: EntityType =      {
                 name: node.getAttribute("Name") || '',
                 namespace: node.parentElement?.getAttribute("Namespace") || '',
-                entitySet:entitySet?.name,
-                creatable: (entitySet?.creatable?.toLowerCase() === "true"),
-                updatable: (entitySet?.updatable?.toLowerCase() === "true"),
-                deletable: (entitySet?.deletable?.toLowerCase() === "true"),
-                addressable: (entitySet?.addressable?.toLowerCase() === "true"),
+                entitySet:entitySet?.name as string,
+                creatable: !!entitySet?.creatable,
+                updatable: !!entitySet?.updatable,
+                deletable: !!entitySet?.deletable,
+                addressable: !!entitySet?.addressable,
                 properties: [],
                 navigationProperties: [],
                 keys: []
@@ -269,15 +270,19 @@ export class SAPDiscoveryService {
         return entityTypes;
     }
 
-    private extractEntitySets(xmlDoc: Document): Array<{ [key: string]: string | null }> {
-        const entitySets: Array< { [key: string]: string | null }> = [];
+    private extractEntitySets(xmlDoc: Document): Array<{ [key: string]: string | boolean | null }> {
+        const entitySets: Array< { [key: string]: string | boolean | null }> = [];
         const nodes = xmlDoc.querySelectorAll("EntitySet");
 
     nodes.forEach((node: Element) => {
-            const entityset: { [key: string]: string | null } = {};
+            const entityset: { [key: string]: string | boolean | null } = {};
             ['name','entitytype', 'sap:creatable', 'sap:updatable', 'sap:deletable', 'sap:pageable', 'sap:addressable', 'sap:content-version'].forEach(attr => {
                 const [namespace, name ] = attr.split(":");
                 entityset[name||namespace] = node.getAttribute(attr);
+            });
+            ['sap:creatable', 'sap:updatable', 'sap:deletable', 'sap:pageable', 'sap:addressable'].forEach(attr => {
+                const [namespace, name ] = attr.split(":");
+                entityset[name||namespace] = node.getAttribute(attr) === "false" ? false : true;
             });
             if (entityset.name) {
                 entitySets.push(entityset);
