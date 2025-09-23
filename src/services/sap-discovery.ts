@@ -27,16 +27,16 @@ export class SAPDiscoveryService {
             const filterConfig = this.config.getServiceFilterConfig();
             this.logger.info('OData service discovery configuration:', filterConfig);
 
-            // Try OData V4 catalog first
+            // // Try OData V4 catalog first
             // const v4Services = await this.discoverV4Services();
             // services.push(...v4Services);
 
             // Fallback to V2 service discovery
-            if (services.length === 0) {
+            // if (services.length === 0) {
                 const v2Services = await this.discoverV2Services();
                 services.push(...v2Services);
-            }
 
+                
             // Apply service filtering based on configuration
             const filteredServices = this.filterServices(services);
             this.logger.info(`Discovered ${services.length} total services, ${filteredServices.length} match the filter criteria`);
@@ -152,8 +152,8 @@ export class SAPDiscoveryService {
                             title: service.Title || service.ServiceId,
                             description: service.Description || `OData service ${service.ServiceId}`,
                             odataVersion: 'v4',
-                            url: `/sap/opu/odata4/sap/${service.ServiceId.toLowerCase()}/${service.ServiceVersion || '0001'}/`,
-                            metadataUrl: `/sap/opu/odata4/sap/${service.ServiceId.toLowerCase()}/${service.ServiceVersion || '0001'}/$metadata`,
+                            url: `/sap/opu/odata4/sap/${service.ServiceId.toLowerCase()}/srvd/sap/${service.ServiceId.toLowerCase()}/${service.ServiceVersion || '0001'}/`,
+                            metadataUrl: `/sap/opu/odata4/sap/${service.ServiceId.toLowerCase()}/srvd/sap/${service.ServiceId.toLowerCase()}/${service.ServiceVersion || '0001'}/$metadata`,
                             entitySets: [],
                             metadata: null
                         });
