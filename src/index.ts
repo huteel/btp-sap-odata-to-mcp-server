@@ -249,13 +249,11 @@ export function createApp(): express.Application {
                 gettingStarted: [
                     '1. Authenticate: Navigate to /oauth/authorize to get your access token',
                     '2. Connect: Use the token in Authorization header for MCP requests',
-                    '3. Discover: Start with search-sap-services to find available SAP services',
-                    '4. Explore: Use discover-service-entities to see what data is available',
-                    '5. Execute: Use execute-entity-operation to read, create, update, or delete data'
+                    '3. Discover ONCE: Use discover-sap-data to find services and entities (returns complete schemas)',
+                    '4. Execute: Use execute-sap-operation to read, create, update, or delete data'
                 ],
                 availableOperations: [
-                    'Search and filter SAP OData services by category or keyword',
-                    'Discover entities and their properties within services',
+                    'Search SAP OData services, entities, and properties with discover-sap-data (SINGLE CALL)',
                     'Read entity collections with OData query options ($filter, $select, etc.)',
                     'Read individual entities by key',
                     'Create new entities with proper validation',
@@ -263,9 +261,9 @@ export function createApp(): express.Application {
                     'Delete entities with proper authorization'
                 ],
                 bestPractices: [
-                    'Always start with search-sap-services to understand available data',
-                    'Use discover-service-entities before attempting CRUD operations',
-                    'Check entity capabilities (creatable, updatable, deletable) before operations',
+                    'Call discover-sap-data ONCE - it returns complete schemas with all details',
+                    'DO NOT call discover-sap-data multiple times with different queries',
+                    'Check entity capabilities (creatable, updatable, deletable) in discovery response',
                     'Use OData query options to filter and limit data retrieval',
                     'JWT tokens expire - refresh when needed via /oauth/refresh'
                 ]
@@ -281,15 +279,13 @@ export function createApp(): express.Application {
             claude_ai_guidance: isAuthenticated ? {
                 status: 'Ready to assist with SAP operations',
                 available_tools: [
-                    'search-sap-services: Find SAP services by category',
-                    'discover-service-entities: Explore service entities',
-                    'get-entity-schema: Get entity structure details',
-                    'execute-entity-operation: Perform CRUD operations'
+                    'discover-sap-data: SINGLE-USE tool - returns complete schemas (call ONCE)',
+                    'execute-sap-operation: Perform CRUD operations on entities'
                 ],
                 next_steps: [
-                    'Start with search-sap-services to discover available data',
-                    'Use discover-service-entities to understand service capabilities',
-                    'Execute operations with proper user authorization'
+                    'Call discover-sap-data ONCE to get complete service/entity schemas',
+                    'Immediately execute operations using data from discovery response',
+                    'DO NOT call discover-sap-data multiple times'
                 ]
             } : {
                 status: 'Authentication required before I can help with SAP operations',

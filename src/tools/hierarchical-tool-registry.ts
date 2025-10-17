@@ -49,7 +49,7 @@ export class HierarchicalSAPToolRegistry {
             "discover-sap-data",
             {
                 title: "Discover SAP Data",
-                description: "AUTHENTICATION AWARE: Universal search tool for SAP OData services, entities, and properties. ⚠️ ALWAYS returns COMPLETE schemas with ALL property details in a SINGLE call. ⚠️ This is the ONLY discovery call you need - all information (services, entities, properties, types, keys, capabilities) is included in ONE response. After calling this tool ONCE, proceed IMMEDIATELY to execute-sap-operation. NEVER call discover-sap-data twice. Discovery uses technical user, but data operations require user authentication.",
+                description: "[SINGLE-USE DISCOVERY TOOL] Call this tool ONCE and you will receive EVERYTHING you need. Returns COMPLETE entity schemas with ALL properties, types, keys, and capabilities in ONE response. WARNING: NEVER call this tool multiple times with different queries - the first call gives you full information. After receiving results, proceed IMMEDIATELY to execute-sap-operation. DO NOT try variations like searching for service IDs, entity names, or refined queries - you already have complete data. Discovery uses technical user (no auth needed), but execute operations require user authentication.",
                 inputSchema: {
                     query: z.string().optional().describe("Search term to find services, entities, or properties. Searches across service names, entity names, and property names. Examples: 'customer', 'email', 'sales order'. If omitted, returns ALL available services and entities. Returns FULL entity schemas with ALL property details in ONE call - you will have EVERYTHING you need after this single call."),
                     category: z.string().optional().describe("Service category filter. Valid values: business-partner, sales, finance, procurement, hr, logistics, all. Default: all. Narrows search results to specific business area. If no results found with specified category, automatically retries with 'all' categories in the same request."),
@@ -370,23 +370,34 @@ export class HierarchicalSAPToolRegistry {
                 matches: limitedMatches
             };
 
-            let responseText = `Found ${totalFound} matches`;
-            if (query) responseText += ` for "${query}"`;
-            if (requestedCategory !== "all") responseText += ` in category "${requestedCategory}"`;
-            if (usedCategoryFallback) responseText += ` (searched all categories)`;
-            if (usedSeparatedWords) responseText += ` (matched separated words)`;
-            responseText += `:\n\n${JSON.stringify(result, null, 2)}`;
+            // Build response with GUIDANCE FIRST, then data
+            let responseText = "";
 
             if (limitedMatches.length > 0) {
-                responseText += `\n\n== READY TO EXECUTE ==`;
-                responseText += `\n✓ COMPLETE SCHEMAS INCLUDED - All entity properties, types, keys, and capabilities are already in the results above`;
-                responseText += `\n✓ NO ADDITIONAL DISCOVERY NEEDED - Do NOT call discover-sap-data again`;
-                responseText += `\n✓ EXECUTE IMMEDIATELY - Use execute-sap-operation now with:`;
-                responseText += `\n  - serviceId: Use the 'id' field from service section above`;
-                responseText += `\n  - entityName: Use the 'name' field from entity section above`;
-                responseText += `\n  - operation: read, read-single, create, update, or delete`;
-                responseText += `\n  - parameters: Use the property names shown in the schema above`;
+                responseText += `*** DISCOVERY COMPLETE - YOU HAVE EVERYTHING YOU NEED! ***\n\n`;
+                responseText += `[COMPLETE] This response contains COMPLETE entity schemas with ALL properties, types, keys, and capabilities\n`;
+                responseText += `[STOP] NO additional discovery needed - Do NOT call discover-sap-data again\n`;
+                responseText += `[NEXT] Use execute-sap-operation immediately with the data below\n\n`;
+                responseText += `SUMMARY: Found ${totalFound} matches`;
+                if (query) responseText += ` for "${query}"`;
+                if (requestedCategory !== "all") responseText += ` in category "${requestedCategory}"`;
+                if (usedCategoryFallback) responseText += ` (searched all categories)`;
+                if (usedSeparatedWords) responseText += ` (matched separated words)`;
+                responseText += `, showing ${limitedMatches.length}\n\n`;
+                responseText += `EXECUTE WITH THESE VALUES:\n`;
+                responseText += `  serviceId: "${limitedMatches[0].service.id}" (from 'service.id' in results)\n`;
+                if (limitedMatches[0].type === 'entity' || limitedMatches[0].type === 'property') {
+                    responseText += `  entityName: "${limitedMatches[0].entity.name}" (from 'entity.name' in results)\n`;
+                }
+                responseText += `  operation: read | read-single | create | update | delete\n\n`;
+                responseText += `================================================\n`;
+                responseText += `FULL DATA (complete schemas with all details):\n`;
+                responseText += `================================================\n\n`;
+                responseText += JSON.stringify(result, null, 2);
             } else {
+                responseText += `No matches found`;
+                if (query) responseText += ` for "${query}"`;
+                if (requestedCategory !== "all") responseText += ` in category "${requestedCategory}"`;
                 responseText += `\n\n== SUGGESTION ==`;
                 responseText += `\nTry different search terms or categories: business-partner, sales, finance, procurement, hr, logistics, all`;
             }
@@ -517,7 +528,7 @@ export class HierarchicalSAPToolRegistry {
                 if (serviceByTitle) {
                     errorMessage += `WARNING: It looks like you used the 'title' field instead of the 'id' field!\n`;
                     errorMessage += `CORRECTION: Use this serviceId instead: ${serviceByTitle.id}\n\n`;
-                    errorMessage += `Remember: Always use the 'id' field from search-sap-services results, NOT the 'title' field.`;
+                    errorMessage += `Remember: Always use the 'id' field from discover-sap-data results, NOT the 'title' field.`;
                 } else {
                     errorMessage += `SUGGESTION: Use 'discover-sap-data' to find available services.\n`;
                     errorMessage += `REMINDER: Make sure you're using the 'id' field from search results, NOT the 'title' field.`;
@@ -626,7 +637,7 @@ export class HierarchicalSAPToolRegistry {
                 if (serviceByTitle) {
                     errorMessage += `WARNING: It looks like you used the 'title' field instead of the 'id' field!\n`;
                     errorMessage += `CORRECTION: Use this serviceId instead: ${serviceByTitle.id}\n\n`;
-                    errorMessage += `Remember: Always use the 'id' field from search-sap-services results, NOT the 'title' field.`;
+                    errorMessage += `Remember: Always use the 'id' field from discover-sap-data results, NOT the 'title' field.`;
                 } else {
                     errorMessage += `SUGGESTION: Use 'discover-sap-data' to find available services.\n`;
                     errorMessage += `REMINDER: Make sure you're using the 'id' field from search results, NOT the 'title' field.`;
@@ -748,7 +759,7 @@ export class HierarchicalSAPToolRegistry {
                 if (serviceByTitle) {
                     errorMessage += `WARNING: It looks like you used the 'title' field instead of the 'id' field!\n`;
                     errorMessage += `CORRECTION: Use this serviceId instead: ${serviceByTitle.id}\n\n`;
-                    errorMessage += `Remember: Always use the 'id' field from search-sap-services results, NOT the 'title' field.`;
+                    errorMessage += `Remember: Always use the 'id' field from discover-sap-data results, NOT the 'title' field.`;
                 } else {
                     errorMessage += `SUGGESTION: Use 'discover-sap-data' to find available services.\n`;
                     errorMessage += `REMINDER: Make sure you're using the 'id' field from search results, NOT the 'title' field.`;
@@ -983,9 +994,9 @@ export class HierarchicalSAPToolRegistry {
                         status: 'READY',
                         message: 'User is authenticated. You can now help them access SAP data.',
                         workflow: [
-                            'Use discover-sap-data to search for services, entities, or properties',
-                            'Call discover-sap-data with serviceId + entityName for full schema when needed',
-                            'Execute CRUD operations with execute-sap-operation'
+                            'Call discover-sap-data ONCE with query - returns complete schemas',
+                            'Immediately execute CRUD operations with execute-sap-operation using data from step 1',
+                            'DO NOT call discover-sap-data multiple times with different queries'
                         ],
                         security_context: 'Operations execute under authenticated user identity'
                     } : {
