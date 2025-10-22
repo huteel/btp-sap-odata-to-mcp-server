@@ -219,6 +219,27 @@ export class HierarchicalSAPToolRegistry {
             }
 
             if (serviceScore > 0 || !query) {
+                // Always include full entity schemas even for service-level matches
+                const entities = service.metadata?.entityTypes?.map(entity => ({
+                    name: entity.name,
+                    entitySet: entity.entitySet,
+                    keyProperties: entity.keys,
+                    propertyCount: entity.properties.length,
+                    capabilities: {
+                        readable: true,
+                        creatable: entity.creatable,
+                        updatable: entity.updatable,
+                        deletable: entity.deletable
+                    },
+                    properties: entity.properties.map(prop => ({
+                        name: prop.name,
+                        type: prop.type,
+                        nullable: prop.nullable,
+                        maxLength: prop.maxLength,
+                        isKey: entity.keys.includes(prop.name)
+                    }))
+                })) || [];
+
                 matches.push({
                     type: "service",
                     score: serviceScore || 0.5,
@@ -229,6 +250,8 @@ export class HierarchicalSAPToolRegistry {
                         entityCount: service.metadata?.entityTypes?.length || 0,
                         categories: this.serviceCategories.get(service.id) || []
                     },
+                    // Include all entities with full schemas
+                    entities: entities,
                     matchReason: serviceScore > 0 ? `Service matches '${query}'` : `Service in category '${category}'`
                 });
             }
@@ -318,6 +341,7 @@ export class HierarchicalSAPToolRegistry {
             let searchMode: 'combined' | 'separated' = 'combined';
             let usedCategoryFallback = false;
             let usedSeparatedWords = false;
+            let returnedAllServices = false;
 
             // Level 1: Try combined words with requested category
             matches = this.performCategorySearch(query, category, 'combined');
@@ -350,6 +374,15 @@ export class HierarchicalSAPToolRegistry {
                 }
             }
 
+            // Level 5: If still no results after all attempts, return ALL services with full schemas
+            if (matches.length === 0 && query) {
+                this.logger.debug(`No results found for query '${query}', returning all available services with full schemas`);
+                // Return all services with complete entity schemas
+                matches = this.performCategorySearch("", category, 'combined');
+                returnedAllServices = true;
+                usedCategoryFallback = true;
+            }
+
             // Sort by relevance score
             matches.sort((a, b) => b.score - a.score);
 
@@ -364,6 +397,7 @@ export class HierarchicalSAPToolRegistry {
                 searchMode: searchMode,
                 usedCategoryFallback: usedCategoryFallback,
                 usedSeparatedWords: usedSeparatedWords,
+                returnedAllServices: returnedAllServices,
                 totalFound: totalFound,
                 showing: limitedMatches.length,
                 detailLevel: "full",
@@ -378,10 +412,13 @@ export class HierarchicalSAPToolRegistry {
                 responseText += `[COMPLETE] This response contains COMPLETE entity schemas with ALL properties, types, keys, and capabilities\n`;
                 responseText += `[STOP] NO additional discovery needed - Do NOT call discover-sap-data again\n`;
                 responseText += `[NEXT] Use execute-sap-operation immediately with the data below\n\n`;
+                if (returnedAllServices) {
+                    responseText += `NOTICE: No matches found for "${query}", so returning ALL available services with full schemas\n\n`;
+                }
                 responseText += `SUMMARY: Found ${totalFound} matches`;
-                if (query) responseText += ` for "${query}"`;
+                if (query && !returnedAllServices) responseText += ` for "${query}"`;
                 if (requestedCategory !== "all") responseText += ` in category "${requestedCategory}"`;
-                if (usedCategoryFallback) responseText += ` (searched all categories)`;
+                if (usedCategoryFallback && !returnedAllServices) responseText += ` (searched all categories)`;
                 if (usedSeparatedWords) responseText += ` (matched separated words)`;
                 responseText += `, showing ${limitedMatches.length}\n\n`;
                 responseText += `EXECUTE WITH THESE VALUES:\n`;
