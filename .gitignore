@@ -23,6 +23,7 @@ mta_archives/
 *.swp
 *.swo
 *~
+.env*
 
 # System files
 .DS_Store
