@@ -5,15 +5,23 @@ import { ODataService, EntityType } from "../types/sap-types.js";
 import { z } from "zod";
 
 /**
- * Hierarchical Tool Registry - Solves the "tool explosion" problem
+ * Hierarchical Tool Registry - Solves the "tool explosion" problem with 3-level architecture
  *
  * Instead of registering hundreds of CRUD tools upfront (5 ops × 40+ entities × services),
- * this registry uses an intelligent discovery approach with just 2 smart tools:
- * 1. discover-sap-data - Universal intelligent search across services, entities, and properties
- *                        with context-aware detail levels (summary for search, full for direct access)
- * 2. execute-sap-operation - Perform CRUD operations on any entity
+ * this registry uses a 3-level progressive discovery approach optimized for LLM token efficiency:
  *
- * This reduces AI assistant context from 200+ tools to just 2, solving token overflow
+ * Level 1: discover-sap-data - Lightweight search returning minimal service/entity list
+ *          Returns: serviceId, serviceName, entityName only (for LLM decision making)
+ *          Fallback: If no matches, returns ALL services with entities (minimal fields)
+ *
+ * Level 2: get-entity-metadata - Full schema details for selected service/entity
+ *          Returns: Complete entity schema with properties, types, keys, capabilities
+ *          Purpose: Provides LLM with all details needed to construct proper operation
+ *
+ * Level 3: execute-sap-operation - Execute CRUD operation with authenticated user context
+ *          Uses: Metadata from Level 2 to perform actual data operations
+ *
+ * This reduces AI assistant context from 200+ tools to 3, solving token overflow
  * and dramatically improving tool selection for AI assistants like Claude and Microsoft Copilot.
  */
 export class HierarchicalSAPToolRegistry {
@@ -39,34 +47,50 @@ export class HierarchicalSAPToolRegistry {
     }
 
     /**
-     * Register the 2 intelligent discovery tools instead of 200+ individual CRUD tools
+     * Register the 3-level progressive discovery tools instead of 200+ individual CRUD tools
      */
     public async registerDiscoveryTools(): Promise<void> {
-        this.logger.info(`🔧 Registering intelligent discovery tools for ${this.discoveredServices.length} services`);
+        this.logger.info(`🔧 Registering 3-level intelligent discovery tools for ${this.discoveredServices.length} services`);
 
-        // Tool 1: Intelligent universal discovery - SIMPLIFIED to query-only interface
+        // Level 1: Lightweight discovery - returns minimal service/entity list for LLM decision
         this.mcpServer.registerTool(
             "discover-sap-data",
             {
-                title: "Discover SAP Data",
-                description: "[SINGLE-USE DISCOVERY TOOL] Call this tool ONCE and you will receive EVERYTHING you need. Returns COMPLETE entity schemas with ALL properties, types, keys, and capabilities in ONE response. WARNING: NEVER call this tool multiple times with different queries - the first call gives you full information. After receiving results, proceed IMMEDIATELY to execute-sap-operation. DO NOT try variations like searching for service IDs, entity names, or refined queries - you already have complete data. Discovery uses technical user (no auth needed), but execute operations require user authentication.",
+                title: "Level 1: Discover SAP Services and Entities",
+                description: "[LEVEL 1 - DISCOVERY] Search for SAP services and entities. Returns MINIMAL data (serviceId, serviceName, entityName) optimized for LLM decision making. If query matches, returns relevant results. If NO matches found, returns ALL available services with entities. After this call, use get-entity-metadata (Level 2) to get full schema details for your selected entity. Uses technical user (no auth needed).",
                 inputSchema: {
-                    query: z.string().optional().describe("Search term to find services, entities, or properties. Searches across service names, entity names, and property names. Examples: 'customer', 'email', 'sales order'. If omitted, returns ALL available services and entities. Returns FULL entity schemas with ALL property details in ONE call - you will have EVERYTHING you need after this single call."),
-                    category: z.string().optional().describe("Service category filter. Valid values: business-partner, sales, finance, procurement, hr, logistics, all. Default: all. Narrows search results to specific business area. If no results found with specified category, automatically retries with 'all' categories in the same request."),
-                    limit: z.number().min(1).max(20).optional().describe("Maximum number of results to return. Default: 10. Use this to control result set size.")
+                    query: z.string().optional().describe("Search term to find services or entities. Searches service names, entity names. Examples: 'customer', 'sales order', 'employee'. If omitted or no matches found, returns ALL services with their entities (minimal fields only)."),
+                    category: z.string().optional().describe("Service category filter. Valid values: business-partner, sales, finance, procurement, hr, logistics, all. Default: all. Narrows search to specific business area."),
+                    limit: z.number().min(1).max(50).optional().describe("Maximum number of results. Default: 20. Use higher limits when returning all services.")
                 }
             },
             async (args: Record<string, unknown>) => {
-                return this.discoverDataUnified(args);
+                return this.discoverServicesAndEntitiesMinimal(args);
             }
         );
 
-        // Tool 2: Execute operations on entities
+        // Level 2: Get full entity metadata for selected service/entity
+        this.mcpServer.registerTool(
+            "get-entity-metadata",
+            {
+                title: "Level 2: Get Entity Metadata",
+                description: "[LEVEL 2 - METADATA] Get complete schema details for a specific entity. Returns ALL properties with types, keys, nullable flags, maxLength, and capabilities (creatable, updatable, deletable). Use this after discover-sap-data to get full details needed for execute-sap-operation. Uses technical user (no auth needed).",
+                inputSchema: {
+                    serviceId: z.string().describe("Service ID from discover-sap-data results. Use the 'serviceId' field exactly as returned."),
+                    entityName: z.string().describe("Entity name from discover-sap-data results. Use the 'entityName' field exactly as returned.")
+                }
+            },
+            async (args: Record<string, unknown>) => {
+                return this.getEntityMetadataFull(args);
+            }
+        );
+
+        // Level 3: Execute operations on entities
         this.mcpServer.registerTool(
             "execute-sap-operation",
             {
-                title: "Execute SAP Operation",
-                description: "AUTHENTICATION REQUIRED: Perform CRUD operations on SAP entities using authenticated user context. This tool requires valid JWT token for authorization and audit trail. Use discover-sap-data first to find and understand available services and entities. Operations execute under user's SAP identity.",
+                title: "Level 3: Execute SAP Operation",
+                description: "[LEVEL 3 - EXECUTION] AUTHENTICATION REQUIRED: Perform CRUD operations on SAP entities using authenticated user context. Requires valid JWT token for authorization. Use get-entity-metadata (Level 2) first to understand entity schema, then call this to execute operations. Operations execute under user's SAP identity with full audit trail.",
                 inputSchema: {
                     serviceId: z.string().describe("The SAP service ID from discover-sap-data. IMPORTANT: Use the 'id' field from the search results, NOT the 'title' field."),
                     entityName: z.string().describe("The entity name from discover-sap-data. IMPORTANT: Use the 'name' field from the results, NOT the 'entitySet' field."),
@@ -86,7 +110,7 @@ export class HierarchicalSAPToolRegistry {
             }
         );
 
-        this.logger.info("✅ Registered 2 intelligent discovery tools successfully");
+        this.logger.info("✅ Registered 3-level intelligent discovery tools successfully");
     }
 
     /**
@@ -148,19 +172,292 @@ export class HierarchicalSAPToolRegistry {
     }
 
     /**
-     * Intelligent unified discovery method - SIMPLIFIED to query-only interface
-     * Always returns full schemas for maximum efficiency (avoids follow-up requests)
+     * Level 1: Lightweight discovery - returns minimal service/entity list
+     * Optimized for LLM token efficiency with only essential fields
      *
-     * Behavior:
-     * - If query provided: Search with that term
-     * - If no query and no category: Return ALL services and entities
-     * - If category provided: Filter by that category
-     * - Returns COMPLETE entity information in ONE call
-     * - No need for follow-up calls with serviceId/entityName
+     * Returns:
+     * - If query matches: Relevant services/entities with minimal fields
+     * - If no matches: ALL services with entities (minimal fields)
+     * - Fields returned: serviceId, serviceName, entityName, entityCount, categories
      */
-    private async discoverDataUnified(args: Record<string, unknown>) {
-        // Always use search method - it handles empty queries and returns everything
-        return this.searchServicesAndEntities(args);
+    private async discoverServicesAndEntitiesMinimal(args: Record<string, unknown>) {
+        try {
+            const query = (args.query as string)?.toLowerCase() || "";
+            const requestedCategory = (args.category as string)?.toLowerCase() || "all";
+            const limit = (args.limit as number) || 20;
+
+            // Validate category
+            const validCategories = ["business-partner", "sales", "finance", "procurement", "hr", "logistics", "all"];
+            let category = validCategories.includes(requestedCategory) ? requestedCategory : "all";
+
+            let matches: any[] = [];
+            let returnedAllServices = false;
+
+            // Try to find matches
+            matches = this.performMinimalSearch(query, category);
+
+            // If no matches found, return ALL services with minimal data
+            if (matches.length === 0 && query) {
+                this.logger.debug(`No results found for query '${query}', returning all available services (minimal)`);
+                matches = this.performMinimalSearch("", category);
+                returnedAllServices = true;
+            }
+
+            // Sort by relevance score (if searching) or alphabetically (if returning all)
+            if (!returnedAllServices && query) {
+                matches.sort((a, b) => b.score - a.score);
+            } else {
+                matches.sort((a, b) => {
+                    if (a.type === 'service' && b.type === 'service') {
+                        return a.service.serviceName.localeCompare(b.service.serviceName);
+                    }
+                    return 0;
+                });
+            }
+
+            // Apply limit
+            const totalFound = matches.length;
+            const limitedMatches = matches.slice(0, limit);
+
+            const result = {
+                query: query || "all",
+                category: category,
+                returnedAllServices: returnedAllServices,
+                totalFound: totalFound,
+                showing: limitedMatches.length,
+                matches: limitedMatches
+            };
+
+            // Build response
+            let responseText = "";
+
+            if (returnedAllServices) {
+                responseText += `[LEVEL 1 - NO MATCHES] No results found for "${query}". Returning ALL available services and entities.\n\n`;
+            } else if (query) {
+                responseText += `[LEVEL 1 - SEARCH RESULTS] Found ${totalFound} matches for "${query}"\n\n`;
+            } else {
+                responseText += `[LEVEL 1 - ALL SERVICES] Showing all available services and entities\n\n`;
+            }
+
+            responseText += `NEXT STEP: Select a service and entity from the results below, then call get-entity-metadata\n`;
+            responseText += `  with the serviceId and entityName to get full schema details.\n\n`;
+            responseText += `Results (showing ${limitedMatches.length} of ${totalFound}):\n\n`;
+            responseText += JSON.stringify(result, null, 2);
+
+            return {
+                content: [{
+                    type: "text" as const,
+                    text: responseText
+                }]
+            };
+
+        } catch (error) {
+            this.logger.error('Error in Level 1 discovery:', error);
+            return {
+                content: [{
+                    type: "text" as const,
+                    text: `ERROR: ${error instanceof Error ? error.message : String(error)}`
+                }],
+                isError: true
+            };
+        }
+    }
+
+    /**
+     * Level 2: Get full entity metadata for a specific service and entity
+     * Returns complete schema with all properties, types, keys, and capabilities
+     */
+    private async getEntityMetadataFull(args: Record<string, unknown>) {
+        try {
+            const serviceId = args.serviceId as string;
+            const entityName = args.entityName as string;
+
+            if (!serviceId || !entityName) {
+                return {
+                    content: [{
+                        type: "text" as const,
+                        text: `ERROR: Both serviceId and entityName are required.\n\nUsage: Call discover-sap-data first, then use the serviceId and entityName from those results.`
+                    }],
+                    isError: true
+                };
+            }
+
+            // Find the service
+            const service = this.discoveredServices.find(s => s.id === serviceId);
+            if (!service) {
+                return {
+                    content: [{
+                        type: "text" as const,
+                        text: `ERROR: Service not found: ${serviceId}\n\nUse discover-sap-data to find available services.`
+                    }],
+                    isError: true
+                };
+            }
+
+            // Find the entity
+            const entityType = service.metadata?.entityTypes?.find(e => e.name === entityName);
+            if (!entityType) {
+                const availableEntities = service.metadata?.entityTypes?.map(e => e.name).join(', ') || 'none';
+                return {
+                    content: [{
+                        type: "text" as const,
+                        text: `ERROR: Entity '${entityName}' not found in service '${serviceId}'\n\nAvailable entities: ${availableEntities}`
+                    }],
+                    isError: true
+                };
+            }
+
+            // Build complete metadata response
+            const metadata = {
+                service: {
+                    serviceId: service.id,
+                    serviceName: service.title,
+                    description: service.description,
+                    odataVersion: service.odataVersion
+                },
+                entity: {
+                    name: entityType.name,
+                    entitySet: entityType.entitySet,
+                    namespace: entityType.namespace,
+                    keyProperties: entityType.keys,
+                    propertyCount: entityType.properties.length
+                },
+                capabilities: {
+                    readable: true,
+                    creatable: entityType.creatable,
+                    updatable: entityType.updatable,
+                    deletable: entityType.deletable
+                },
+                properties: entityType.properties.map(prop => ({
+                    name: prop.name,
+                    type: prop.type,
+                    nullable: prop.nullable,
+                    maxLength: prop.maxLength,
+                    isKey: entityType.keys.includes(prop.name)
+                }))
+            };
+
+            let responseText = `[LEVEL 2 - ENTITY METADATA] Complete schema for ${entityName} in ${service.title}\n\n`;
+            responseText += `NEXT STEP: Use execute-sap-operation with:\n`;
+            responseText += `  - serviceId: "${serviceId}"\n`;
+            responseText += `  - entityName: "${entityName}"\n`;
+            responseText += `  - operation: read | read-single | create | update | delete\n`;
+            responseText += `  - Use the properties below to construct parameters\n\n`;
+            responseText += `Key Properties: [${entityType.keys.join(', ')}]\n`;
+            responseText += `Capabilities: creatable=${entityType.creatable}, updatable=${entityType.updatable}, deletable=${entityType.deletable}\n\n`;
+            responseText += `Full Metadata:\n\n`;
+            responseText += JSON.stringify(metadata, null, 2);
+
+            return {
+                content: [{
+                    type: "text" as const,
+                    text: responseText
+                }]
+            };
+
+        } catch (error) {
+            this.logger.error('Error in Level 2 metadata retrieval:', error);
+            return {
+                content: [{
+                    type: "text" as const,
+                    text: `ERROR: ${error instanceof Error ? error.message : String(error)}`
+                }],
+                isError: true
+            };
+        }
+    }
+
+    /**
+     * Perform minimal search across services and entities
+     * Returns only essential fields: serviceId, serviceName, entityName
+     * Optimized for LLM token efficiency
+     */
+    private performMinimalSearch(query: string, category: string): Array<{
+        type: 'service' | 'entity';
+        score: number;
+        service: {
+            serviceId: string;
+            serviceName: string;
+            entityCount: number;
+            categories: string[];
+        };
+        entities?: Array<{
+            entityName: string;
+        }>;
+        entity?: {
+            entityName: string;
+        };
+        matchReason?: string;
+    }> {
+        const matches: Array<any> = [];
+
+        // Search across all services
+        for (const service of this.discoveredServices) {
+            // Filter by category first
+            if (category !== "all") {
+                const serviceCategories = this.serviceCategories.get(service.id) || [];
+                if (!serviceCategories.includes(category)) {
+                    continue;
+                }
+            }
+
+            const serviceIdLower = service.id.toLowerCase();
+            const serviceTitleLower = service.title.toLowerCase();
+
+            // Service-level match
+            let serviceScore = 0;
+            if (query) {
+                if (serviceIdLower.includes(query)) serviceScore = 0.9;
+                else if (serviceTitleLower.includes(query)) serviceScore = 0.85;
+            }
+
+            // If service matches or no query, include service with minimal entity list
+            if (serviceScore > 0 || !query) {
+                const entities = service.metadata?.entityTypes?.map(entity => ({
+                    entityName: entity.name
+                })) || [];
+
+                matches.push({
+                    type: "service",
+                    score: serviceScore || 0.5,
+                    service: {
+                        serviceId: service.id,
+                        serviceName: service.title,
+                        entityCount: entities.length,
+                        categories: this.serviceCategories.get(service.id) || []
+                    },
+                    entities: entities,
+                    matchReason: serviceScore > 0 ? `Service matches '${query}'` : `Service in category '${category}'`
+                });
+            }
+
+            // Entity-level matches within this service (only if query provided)
+            if (service.metadata?.entityTypes && query) {
+                for (const entity of service.metadata.entityTypes) {
+                    const entityNameLower = entity.name.toLowerCase();
+
+                    // Match entity name
+                    if (entityNameLower.includes(query)) {
+                        matches.push({
+                            type: "entity",
+                            score: 0.95,
+                            service: {
+                                serviceId: service.id,
+                                serviceName: service.title,
+                                entityCount: service.metadata.entityTypes.length,
+                                categories: this.serviceCategories.get(service.id) || []
+                            },
+                            entity: {
+                                entityName: entity.name
+                            },
+                            matchReason: `Entity '${entity.name}' matches '${query}'`
+                        });
+                    }
+                }
+            }
+        }
+
+        return matches;
     }
 
     /**
@@ -1031,10 +1328,11 @@ export class HierarchicalSAPToolRegistry {
                         status: 'READY',
                         message: 'User is authenticated. You can now help them access SAP data.',
                         workflow: [
-                            'Call discover-sap-data ONCE with query - returns complete schemas',
-                            'Immediately execute CRUD operations with execute-sap-operation using data from step 1',
-                            'DO NOT call discover-sap-data multiple times with different queries'
+                            'Level 1: Call discover-sap-data to find services/entities (returns minimal data)',
+                            'Level 2: Call get-entity-metadata for selected entity (returns full schema)',
+                            'Level 3: Call execute-sap-operation to perform CRUD operations (uses schema from Level 2)'
                         ],
+                        architecture: '3-level progressive discovery optimized for token efficiency',
                         security_context: 'Operations execute under authenticated user identity'
                     } : {
                         status: 'AUTHENTICATION_REQUIRED',
@@ -1133,51 +1431,56 @@ Authentication Requirements:
    - Discovery operations: Technical user (reliable metadata access)
    - Data operations: User's JWT token (proper authorization and audit trail)
 
-== AVAILABLE TOOLS ==
+== AVAILABLE TOOLS - 3-LEVEL ARCHITECTURE ==
 
-You have access to 2 intelligent tools:
+You have access to 3 progressive discovery tools optimized for token efficiency:
 
-1. discover-sap-data (UNIVERSAL SEARCH - COMPLETE RESULTS IN ONE CALL)
-- Purpose: Single tool for ALL discovery - services, entities, AND properties
-- Returns: COMPLETE schemas with ALL property details in ONE call
+LEVEL 1: discover-sap-data (LIGHTWEIGHT DISCOVERY)
+- Purpose: Search and find relevant services/entities with MINIMAL data
+- Returns: Only serviceId, serviceName, entityName, entityCount (optimized for LLM decision)
+- Fallback: If no matches, returns ALL services with entity lists (still minimal fields)
 - Parameters:
-  - query (REQUIRED): Search across services, entities, properties
+  - query (optional): Search term for services/entities
   - category (optional): Filter by business area (business-partner, sales, finance, etc.)
-  - limit (optional): Maximum results to return (default: 10)
+  - limit (optional): Maximum results (default: 20)
 - Examples:
-  - { query: "customer" } → Returns FULL customer entity schemas
-  - { query: "email" } → Returns all entities with email properties
-  - { query: "sales order", category: "sales" } → Returns sales order entities with FULL schemas
-- ⚠️ CRITICAL: Returns EVERYTHING in ONE call - DO NOT call again with serviceId/entityName
-- This ONE tool call gives you ALL the information you need
+  - { query: "customer" } → Returns list of services/entities matching "customer"
+  - { query: "" } → Returns all available services with their entities
+- Use this: When you need to find or explore what's available
 
-2. execute-sap-operation
+LEVEL 2: get-entity-metadata (FULL SCHEMA DETAILS)
+- Purpose: Get complete schema for a specific entity
+- Returns: ALL properties with types, keys, nullable, maxLength, capabilities
+- Parameters:
+  - serviceId (required): From Level 1 results
+  - entityName (required): From Level 1 results
+- Use this: After selecting service/entity from Level 1, before executing operations
+- Provides all details needed to construct proper CRUD operations
+
+LEVEL 3: execute-sap-operation (AUTHENTICATED EXECUTION)
 - Purpose: Perform CRUD operations on entities
 - Parameters: serviceId, entityName, operation, parameters, OData options
 - Operations: read, read-single, create, update, delete
-- Use when: User wants to interact with actual data
-- All data operations happen here
+- Requires: User authentication (JWT token)
+- Use this: After getting schema from Level 2 to execute actual operations
 
 == RECOMMENDED WORKFLOW ==
 
-⚠️ CRITICAL: discover-sap-data ALWAYS returns COMPLETE schemas. NEVER call it twice for the same entity!
+✅ CORRECT 3-Level Workflow:
+1. discover-sap-data → Find relevant services/entities (minimal data)
+2. get-entity-metadata → Get full schema for selected entity
+3. execute-sap-operation → Execute operation using schema from step 2
 
-Recommended Workflow:
-1. discover-sap-data with query → Returns FULL schemas immediately
-2. execute-sap-operation → Use the schema from step 1
+Benefits of 3-Level Approach:
+- Token Efficient: Level 1 returns minimal data for decision making
+- Progressive Detail: Only fetch full schemas when needed (Level 2)
+- Clear Separation: Discovery → Metadata → Execution
+- Better for LLMs: Smaller responses, clearer workflow
 
-⚠️ WRONG Workflow (DO NOT DO THIS):
-1. discover-sap-data with query → Get results
-2. discover-sap-data with serviceId + entityName → This is REDUNDANT! Step 1 already included FULL schemas!
-3. execute-sap-operation → You wasted a call in step 2!
-
-The discover-sap-data tool returns EVERYTHING you need in ONE call:
-- All properties with types
-- All key properties
-- All capabilities (creatable, updatable, deletable)
-- All constraints (nullable, maxLength)
-
-After calling discover-sap-data ONCE, proceed DIRECTLY to execute-sap-operation!
+⚠️ IMPORTANT: Do NOT skip Level 2!
+- Level 1 gives you entity names to choose from
+- Level 2 gives you the schema details needed for operations
+- Level 3 executes with proper parameters from Level 2
 
 == BEST PRACTICES ==
 
@@ -1204,22 +1507,24 @@ Natural Language Processing:
 == COMMON USER SCENARIOS ==
 
 "Show me customer data"
-1. discover-sap-data with query: "customer" → Returns FULL schemas with all properties
-2. execute-sap-operation to read with filters (use properties from step 1)
+1. discover-sap-data with query: "customer" → Returns minimal list of customer-related entities
+2. get-entity-metadata for selected entity → Returns full schema
+3. execute-sap-operation to read with filters (use properties from step 2)
 
 "I need to update a customer's email"
-1. discover-sap-data with query: "customer email" → Returns FULL entity schemas with email property
-2. execute-sap-operation with operation: "update" (all fields already known from step 1)
+1. discover-sap-data with query: "customer" → Find customer entities
+2. get-entity-metadata for Customer entity → Get full schema with email property
+3. execute-sap-operation with operation: "update" (use schema from step 2)
 
 "Create a new sales order"
-1. discover-sap-data with query: "sales order" → Returns FULL schema with all required fields AND capabilities
-2. Check capabilities in the result (creatable: true already included)
-3. execute-sap-operation with operation: "create" (all required fields already in step 1 result)
+1. discover-sap-data with query: "sales order" → Find sales order entities
+2. get-entity-metadata for SalesOrder entity → Get full schema and check creatable=true
+3. execute-sap-operation with operation: "create" (use required fields from step 2)
 
-"Find all entities with 'Status' property"
-1. discover-sap-data with query: "status" → Returns FULL schemas for all entities with Status property
-2. Pick relevant entity from step 1 results (which include complete schemas)
-3. execute-sap-operation as needed (using schema from step 1)
+"Find all entities in the system"
+1. discover-sap-data with no query → Returns ALL services with entity lists (minimal)
+2. Browse results and select entity of interest
+3. get-entity-metadata for selected entity → Get full details if needed
 
 == IMPORTANT REMINDERS ==
 

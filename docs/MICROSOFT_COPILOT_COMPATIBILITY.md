@@ -2,39 +2,47 @@
 
 ## Overview
 
-The hierarchical tool registry has been optimized to just **2 intelligent tools** with universal search capabilities and context-aware behavior, specifically designed to work excellently with Microsoft Copilot Studio and other AI assistants.
+The hierarchical tool registry has been optimized to just **3 progressive discovery tools** with token-efficient design and clear workflow separation, specifically designed to work excellently with Microsoft Copilot Studio and other AI assistants.
 
-## Major Update: 2-Tool Intelligent Approach
+## Major Update: 3-Level Progressive Discovery
 
-The registry has been dramatically simplified from 4 tools to 2 intelligent tools:
+The registry has been redesigned with a 3-level architecture optimized for token efficiency:
 
 ### Evolution
 
 - **Original**: 200+ tools (one per entity operation)
 - **v1**: 4 tools (search, discover, schema, execute)
 - **v2**: 3 tools (combined search+discover)
-- **v3 (Current)**: **2 tools** (intelligent universal discovery + execute)
+- **v3**: 2 tools (intelligent universal discovery + execute)
+- **v4 (Current)**: **3 tools** (progressive discovery: minimal → full → execute)
 
-### New Structure (2 Tools)
+### New Structure (3 Levels)
 
-1. **discover-sap-data** - Intelligent universal discovery across services, entities, AND properties
-   - Searches everything simultaneously
-   - Context-aware detail levels (summary or full)
-   - Relevance scoring
-   - One tool for ALL discovery needs
+1. **discover-sap-data** (Level 1) - Lightweight discovery with minimal data
+   - Returns only: serviceId, serviceName, entityName, entityCount
+   - Optimized for LLM decision-making
+   - ~90% less data than full schemas
+   - Fallback: Returns ALL services if no matches
 
-2. **execute-sap-operation** - Perform CRUD operations
+2. **get-entity-metadata** (Level 2) - Full schema on-demand
+   - Returns complete entity schema with all properties
+   - Only fetched when needed (after Level 1 selection)
+   - Includes types, keys, capabilities, constraints
+
+3. **execute-sap-operation** (Level 3) - Authenticated CRUD operations
+   - Uses metadata from Level 2
+   - Performs actual operations with user auth
 
 **Revolutionary Benefits:**
 
-- **Simplest possible tool selection** - Only 2 choices!
-- **Semantic search** - "Find entities with email property" just works
-- **Context-aware intelligence** - Automatically returns right detail level
-- **Property-level search** - Search by what you know, not by structure
-- **Relevance scoring** - AI knows which matches are most relevant
-- **Optimal for Copilot** - Fewer tools = dramatically better tool selection
+- **Token Efficient** - Level 1 returns 90% less data
+- **Progressive Detail** - Fetch full schemas only when needed
+- **Clear Workflow** - Discovery → Understand → Execute
+- **Better Tool Selection** - Clear separation of concerns
+- **Optimal for Copilot** - Smaller responses fit within token limits
+- **Scalable** - Works with hundreds of services
 
-See [TWO_TOOL_INTELLIGENT_APPROACH.md](./TWO_TOOL_INTELLIGENT_APPROACH.md) for complete details.
+See [THREE_LEVEL_APPROACH.md](./THREE_LEVEL_APPROACH.md) for complete details.
 
 ## Key Changes
 
