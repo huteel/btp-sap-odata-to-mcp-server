@@ -9,32 +9,44 @@ Transform your SAP S/4HANA or ECC system into a **conversational AI interface** 
 - **"Create a new customer with name John Doe"** → Performs POST to Customer entity
 - **"List all purchase orders from this week"** → Applies $filter for date range on PurchaseOrder entity
 
-## 🏗️ **Architecture Overview**
+## 🏗️ **Architecture Overview - 3-Level Progressive Discovery**
 
 ```mermaid
 graph TB
     A[AI Agent/LLM] --> B[MCP Client]
     B --> C[SAP MCP Server]
     C --> D[SAP BTP Destination]
-    D --> E[SAP SAP System]
-    
-    C --> F[Dynamic Service Discovery]
-    F --> G[OData Catalog API]
-    C --> H[CRUD Tool Generation]
-    H --> I[Entity Metadata Parser]
-    
+    D --> E[SAP System]
+
+    C --> F[Level 1: Lightweight Discovery]
+    F --> G[Minimal Service/Entity List]
+    C --> H[Level 2: Full Metadata]
+    H --> I[Complete Entity Schemas]
+    C --> J[Level 3: CRUD Execution]
+    J --> K[Authenticated Operations]
+
     style A fill:#e1f5fe
     style C fill:#f3e5f5
     style E fill:#e8f5e8
+    style F fill:#fff3e0
+    style H fill:#e8eaf6
+    style J fill:#e0f2f1
 ```
 
 ### **Core Components:**
 
-1. **🔍 Service Discovery Engine**: Automatically discovers all available OData services from SAP
-2. **⚙️ Dynamic Tool Generator**: Creates MCP tools for CRUD operations on each discovered entity
-3. **🔌 MCP Protocol Layer**: Full compliance with MCP 2025-06-18 specification
-4. **🌐 HTTP Transport**: Session-based Streamable HTTP for web applications
-5. **🔐 BTP Integration**: Seamless authentication via SAP BTP Destination service
+1. **🔍 Level 1 - Discovery**: Lightweight search returning minimal service/entity lists (token-optimized)
+2. **📋 Level 2 - Metadata**: Full schema details on-demand for selected entities
+3. **⚡ Level 3 - Execution**: Authenticated CRUD operations using metadata from Level 2
+4. **🔌 MCP Protocol Layer**: Full compliance with MCP 2025-06-18 specification
+5. **🌐 HTTP Transport**: Session-based Streamable HTTP for web applications
+6. **🔐 BTP Integration**: Seamless authentication via SAP BTP Destination service
+
+### **3-Level Approach Benefits:**
+- **Token Efficient**: Level 1 returns 90% less data than full schemas
+- **Progressive Detail**: Fetch full schemas only when needed
+- **Better LLM Experience**: Smaller responses, clearer workflow
+- **Reduced Context**: From 200+ tools down to just 3
 
 ## ✨ **Key Features**
 
@@ -135,29 +147,87 @@ The MCP server automatically translates these natural language commands to the a
 | "Create a new customer John Doe" | `c-CustomerService-Customer` | `POST /CustomerSet` |
 | "Delete order 456" | `d-OrderService-Order` | `DELETE /OrderSet('456')` |
 
-## 📋 **Available Tools**
+## 📋 **Available Tools - 3-Level Architecture**
 
-### **Tool Naming Convention**
+The server exposes **3 progressive discovery tools** instead of hundreds of individual CRUD tools:
 
-```text
-{operationAbbreviation}-{serviceId}-{entityName}
+### **Level 1: discover-sap-data**
+**Purpose**: Lightweight search for services and entities
+
+**Returns**: Minimal data (serviceId, serviceName, entityName, entityCount)
+
+**Usage**:
+```javascript
+// Search for customer entities
+discover-sap-data({ query: "customer" })
+
+// Get all available services
+discover-sap-data({ query: "" })
+
+// Search in specific category
+discover-sap-data({ query: "sales", category: "sales" })
 ```
 
-Where operationAbbreviation is:
+**Fallback**: If no matches found, returns ALL services with entity lists
 
-- r: read (query entities or get single entity)
-- c: create (create new entity)
-- u: update (update existing entity)
-- d: delete (delete entity)
+---
 
-Examples:
+### **Level 2: get-entity-metadata**
+**Purpose**: Get complete schema for a specific entity
 
-- r-API_BUSINESS_PARTNER-BusinessPartner
-- c-API_CUSTOMER_MATERIAL_SRV-CustomerMaterial
-- u-API_SALES_ORDER_SRV-SalesOrder
-- d-API_SALES_ORDER_SRV-SalesOrder
+**Returns**: Full schema with properties, types, keys, capabilities
 
-### **CRUD Operations**
+**Usage**:
+```javascript
+// Get full schema for Customer entity
+get-entity-metadata({
+  serviceId: "API_BUSINESS_PARTNER",
+  entityName: "Customer"
+})
+```
+
+**Output**: All properties, types, nullable flags, maxLength, keys, capabilities
+
+---
+
+### **Level 3: execute-sap-operation**
+**Purpose**: Perform authenticated CRUD operations
+
+**Operations**: read, read-single, create, update, delete
+
+**Usage**:
+```javascript
+// Read customers
+execute-sap-operation({
+  serviceId: "API_BUSINESS_PARTNER",
+  entityName: "Customer",
+  operation: "read",
+  filterString: "CustomerName eq 'ACME'"
+})
+
+// Update customer
+execute-sap-operation({
+  serviceId: "API_BUSINESS_PARTNER",
+  entityName: "Customer",
+  operation: "update",
+  parameters: { CustomerID: "123", CustomerName: "New Name" }
+})
+```
+
+---
+
+### **Workflow Example**
+
+```
+1. discover-sap-data → "customer"
+   ↓ Returns: List of customer-related entities
+
+2. get-entity-metadata → "API_BUSINESS_PARTNER", "Customer"
+   ↓ Returns: Full schema with all properties
+
+3. execute-sap-operation → read/create/update/delete
+   ✓ Executes operation with proper parameters
+```
 ### **Protocol Version**: 2025-06-18
 ### **Supported Capabilities**:
 - ✅ **Tools** with `listChanged` notifications
