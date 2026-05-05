@@ -20,8 +20,10 @@ export class MCPServer {
     private mcpServer: McpServer;
     private toolRegistry: HierarchicalSAPToolRegistry | SAPToolRegistry;
     private userToken?: string;
+    private agentId?: string;
 
-    constructor(discoveredServices: ODataService[]) {
+    constructor(discoveredServices: ODataService[], agentId?: string) {
+        this.agentId = agentId;
         this.logger = new Logger('mcp-server');
         const config = new Config();
         const destinationService = new DestinationService(this.logger, config);
@@ -42,7 +44,7 @@ export class MCPServer {
             this.toolRegistry = new SAPToolRegistry(this.mcpServer, this.sapClient, this.logger, this.discoveredServices);
             this.logger.info('Using SAPToolRegistry (flat) for MCP tool exposure');
         } else {
-            this.toolRegistry = new HierarchicalSAPToolRegistry(this.mcpServer, this.sapClient, this.logger, this.discoveredServices);
+            this.toolRegistry = new HierarchicalSAPToolRegistry(this.mcpServer, this.sapClient, this.logger, this.discoveredServices, this.agentId);
             this.logger.info('Using HierarchicalSAPToolRegistry for MCP tool exposure');
         }
     }
@@ -100,8 +102,8 @@ export class MCPServer {
     }
 }
 
-export async function createMCPServer(discoveredServices: ODataService[], userToken?: string): Promise<MCPServer> {
-    const server = new MCPServer(discoveredServices);
+export async function createMCPServer(discoveredServices: ODataService[], userToken?: string, agentId?: string): Promise<MCPServer> {
+    const server = new MCPServer(discoveredServices, agentId);
     if (userToken) {
         server.setUserToken(userToken);
     }

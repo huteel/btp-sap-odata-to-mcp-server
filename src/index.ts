@@ -34,6 +34,11 @@ function getBaseUrl(req: express.Request): string {
     return `${protocol}://${host}`;
 }
 
+// Helper function to extract agentId from URL parameters
+function getAgentId(req: express.Request): string | undefined {
+    return req.query.agentid as string | undefined;
+}
+
 /**
  * Modern Express server hosting SAP MCP Server with session management
  *
@@ -78,7 +83,7 @@ function cleanupExpiredSessions(): void {
 /**
  * Get or create a session for the given session ID with optional user context
  */
-async function getOrCreateSession(sessionId?: string, userToken?: string): Promise<{
+async function getOrCreateSession(sessionId?: string, userToken?: string, agentId?: string): Promise<{
     sessionId: string;
     server: MCPServer;
     transport: StreamableHTTPServerTransport;
@@ -100,7 +105,7 @@ async function getOrCreateSession(sessionId?: string, userToken?: string): Promi
 
     try {
         // Create and initialize MCP server with user token if available
-        const mcpServer = await createMCPServer(discoveredServices, userToken);
+        const mcpServer = await createMCPServer(discoveredServices, userToken, agentId);
 
         // Create HTTP transport
         const transport = new StreamableHTTPServerTransport({
@@ -310,14 +315,15 @@ export function createApp(): express.Application {
         try {
             // Get session ID from header
             const sessionId = authReq.headers['mcp-session-id'] as string | undefined;
+            const agentId = getAgentId(req);
             let session;
 
             if (sessionId && sessions.has(sessionId)) {
                 // Reuse existing session
-                session = await getOrCreateSession(sessionId, authReq.jwtToken);
+                session = await getOrCreateSession(sessionId, authReq.jwtToken, agentId);
             } else if (!sessionId && isInitializeRequest(authReq.body)) {
                 // New initialization request with user token if available
-                session = await getOrCreateSession(undefined, authReq.jwtToken);
+                session = await getOrCreateSession(undefined, authReq.jwtToken, agentId);
             } else {
                 // Invalid request
                 logger.warn(`❌ Invalid MCP request - no session ID and not initialize request`);

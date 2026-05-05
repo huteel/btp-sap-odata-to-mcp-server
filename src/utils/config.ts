@@ -97,9 +97,51 @@ export class Config {
     }
 
     /**
+     * Get effective configuration for a specific agent based on AS_#agentid# environment variables.
+     */
+    getAgentConfig(agentId: string): {
+        servicePatterns: string[];
+        entitiesWhitelist: Record<string, string[]>;
+        capabilities: Record<string, Record<string, string[]>>;
+    } {
+        const config = {
+            servicePatterns: [] as string[],
+            entitiesWhitelist: {} as Record<string, string[]>,
+            capabilities: {} as Record<string, Record<string, string[]>>
+        };
+
+        if (!agentId) {
+             return config;
+        }
+
+        const upperAgentId = agentId.toUpperCase();
+        const envKeys = Object.keys(process.env);
+
+        for (const key of envKeys) {
+            // Check AS_#agentid#_ODATA_SERVICE_PATTERNS
+            if (key === `AS_${upperAgentId}_ODATA_SERVICE_PATTERNS`) {
+                 const val = process.env[key] || '';
+                 try {
+                     const parsed = JSON.parse(val);
+                     config.servicePatterns = Array.isArray(parsed) ? parsed : [parsed];
+                 } catch {
+                     config.servicePatterns = val.split(',').map(s => s.trim()).filter(Boolean);
+                 }
+            }
+
+        }
+
+        return config;
+    }
+
+    /**
      * Check if a service ID matches the configured patterns
      */
-    isServiceAllowed(serviceId: string): boolean {
+    isServiceAllowed(serviceId: string, agentConfig?: { servicePatterns: string[] }): boolean {
+        if (agentConfig && agentConfig.servicePatterns && agentConfig.servicePatterns.length > 0) {
+            return this.matchesAnyPattern(serviceId, agentConfig.servicePatterns);
+        }
+
         const allowAll = this.get('odata.allowAllServices', false);
         if (allowAll) {
             return true;

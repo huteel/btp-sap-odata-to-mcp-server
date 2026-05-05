@@ -24,16 +24,22 @@ import { z } from "zod";
  * This reduces AI assistant context from 200+ tools to 3, solving token overflow
  * and dramatically improving tool selection for AI assistants like Claude and Microsoft Copilot.
  */
+import { Config } from "../utils/config.js";
+
 export class HierarchicalSAPToolRegistry {
     private serviceCategories = new Map<string, string[]>();
     private userToken?: string;
+    private configService = new Config();
+    private agentConfig: ReturnType<typeof this.configService.getAgentConfig>;
 
     constructor(
         private mcpServer: McpServer,
         private sapClient: SAPClient,
         private logger: Logger,
-        private discoveredServices: ODataService[]
+        private discoveredServices: ODataService[],
+        private agentId?: string
     ) {
+        this.agentConfig = this.configService.getAgentConfig(this.agentId || "");
         this.categorizeServices();
     }
 
@@ -188,7 +194,7 @@ export class HierarchicalSAPToolRegistry {
 
             // Validate category
             const validCategories = ["business-partner", "sales", "finance", "procurement", "hr", "logistics", "all"];
-            let category = validCategories.includes(requestedCategory) ? requestedCategory : "all";
+            const category = validCategories.includes(requestedCategory) ? requestedCategory : "all";
 
             let matches: any[] = [];
             let returnedAllServices = false;
@@ -284,6 +290,18 @@ export class HierarchicalSAPToolRegistry {
 
             // Find the service
             const service = this.discoveredServices.find(s => s.id === serviceId);
+
+            // Agent-specific service filtering
+            if (service && this.agentId && !this.configService.isServiceAllowed(service.id, this.agentConfig)) {
+                return {
+                    content: [{
+                        type: "text" as const,
+                        text: `ERROR: Unauthorized access to service '${serviceId}' for agent ${this.agentId}`
+                    }],
+                    isError: true
+                };
+            }
+
             if (!service) {
                 return {
                     content: [{
@@ -296,6 +314,32 @@ export class HierarchicalSAPToolRegistry {
 
             // Find the entity
             const entityType = service.metadata?.entityTypes?.find(e => e.name === entityName);
+
+            // Agent-specific entity filtering
+            if (entityType && this.agentId) {
+                 const upperAgentId = this.agentId.toUpperCase();
+                 const key = `AS_${upperAgentId}_${service.id}_entities`;
+                 const val = process.env[key] || process.env[key.toUpperCase()];
+                 if (val) {
+                     let allowedEntities = [];
+                     try {
+                          const parsed = JSON.parse(val);
+                          allowedEntities = Array.isArray(parsed) ? parsed : [parsed];
+                     } catch {
+                          allowedEntities = val.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+                     }
+                     if (allowedEntities.length > 0 && !allowedEntities.map(e => e.toLowerCase()).includes(entityType.name.toLowerCase())) {
+                         return {
+                             content: [{
+                                 type: "text" as const,
+                                 text: `ERROR: Unauthorized access to entity '${entityName}' in service '${serviceId}' for agent ${this.agentId}`
+                             }],
+                             isError: true
+                         };
+                     }
+                 }
+            }
+
             if (!entityType) {
                 const availableEntities = service.metadata?.entityTypes?.map(e => e.name).join(', ') || 'none';
                 return {
@@ -322,12 +366,37 @@ export class HierarchicalSAPToolRegistry {
                     keyProperties: entityType.keys,
                     propertyCount: entityType.properties.length
                 },
-                capabilities: {
-                    readable: true,
-                    creatable: entityType.creatable,
-                    updatable: entityType.updatable,
-                    deletable: entityType.deletable
-                },
+                capabilities: (() => {
+                    let canRead = true;
+                    let canCreate = entityType.creatable;
+                    let canUpdate = entityType.updatable;
+                    let canDelete = entityType.deletable;
+
+                    if (this.agentId) {
+                         const upperAgentId = this.agentId.toUpperCase();
+                         const key = `AS_${upperAgentId}_${service.id}_${entityType.name}_capability`;
+                         const val = process.env[key] || process.env[key.toUpperCase()];
+                         if (val) {
+                             let caps = [];
+                             try {
+                                  const parsed = JSON.parse(val);
+                                  caps = Array.isArray(parsed) ? parsed : [parsed];
+                             } catch {
+                                  caps = val.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+                             }
+                             canRead = caps.includes('read');
+                             canCreate = caps.includes('create');
+                             canUpdate = caps.includes('update');
+                             canDelete = caps.includes('delete');
+                         }
+                    }
+                    return {
+                        readable: canRead,
+                        creatable: canCreate,
+                        updatable: canUpdate,
+                        deletable: canDelete
+                    };
+                })(),
                 properties: entityType.properties.map(prop => ({
                     name: prop.name,
                     type: prop.type,
@@ -344,7 +413,7 @@ export class HierarchicalSAPToolRegistry {
             responseText += `  - operation: read | read-single | create | update | delete\n`;
             responseText += `  - Use the properties below to construct parameters\n\n`;
             responseText += `Key Properties: [${entityType.keys.join(', ')}]\n`;
-            responseText += `Capabilities: creatable=${entityType.creatable}, updatable=${entityType.updatable}, deletable=${entityType.deletable}\n\n`;
+            responseText += `Capabilities: creatable=${metadata.capabilities.creatable}, updatable=${metadata.capabilities.updatable}, deletable=${metadata.capabilities.deletable}\n\n`;
             responseText += `Full Metadata:\n\n`;
             responseText += JSON.stringify(metadata, null, 2);
 
@@ -393,6 +462,11 @@ export class HierarchicalSAPToolRegistry {
 
         // Search across all services
         for (const service of this.discoveredServices) {
+            // Agent-specific service filtering
+            if (this.agentId && !this.configService.isServiceAllowed(service.id, this.agentConfig)) {
+                continue;
+            }
+
             // Filter by category first
             if (category !== "all") {
                 const serviceCategories = this.serviceCategories.get(service.id) || [];
@@ -413,9 +487,29 @@ export class HierarchicalSAPToolRegistry {
 
             // If service matches or no query, include service with minimal entity list
             if (serviceScore > 0 || !query) {
-                const entities = service.metadata?.entityTypes?.map(entity => ({
+                let entities = service.metadata?.entityTypes?.map(entity => ({
                     entityName: entity.name
                 })) || [];
+
+                // Agent-specific entity whitelist
+                if (this.agentId) {
+                     const upperAgentId = this.agentId.toUpperCase();
+                     const key = `AS_${upperAgentId}_${service.id}_entities`;
+                     const val = process.env[key] || process.env[key.toUpperCase()];
+                     if (val) {
+                         let allowedEntities = [];
+                         try {
+                              const parsed = JSON.parse(val);
+                              allowedEntities = Array.isArray(parsed) ? parsed : [parsed];
+                         } catch {
+                              allowedEntities = val.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+                         }
+                         if (allowedEntities.length > 0) {
+                             const allowedLower = allowedEntities.map(e => e.toLowerCase());
+                             entities = entities.filter(e => allowedLower.includes(e.entityName.toLowerCase()));
+                         }
+                     }
+                }
 
                 matches.push({
                     type: "service",
@@ -435,6 +529,25 @@ export class HierarchicalSAPToolRegistry {
             if (service.metadata?.entityTypes && query) {
                 for (const entity of service.metadata.entityTypes) {
                     const entityNameLower = entity.name.toLowerCase();
+
+                    // Agent-specific entity whitelist
+                    if (this.agentId) {
+                         const upperAgentId = this.agentId.toUpperCase();
+                         const key = `AS_${upperAgentId}_${service.id}_entities`;
+                         const val = process.env[key] || process.env[key.toUpperCase()];
+                         if (val) {
+                             let allowedEntities = [];
+                             try {
+                                  const parsed = JSON.parse(val);
+                                  allowedEntities = Array.isArray(parsed) ? parsed : [parsed];
+                             } catch {
+                                  allowedEntities = val.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+                             }
+                             if (allowedEntities.length > 0 && !allowedEntities.map(e => e.toLowerCase()).includes(entityNameLower)) {
+                                 continue;
+                             }
+                         }
+                    }
 
                     // Match entity name
                     if (entityNameLower.includes(query)) {
@@ -495,6 +608,11 @@ export class HierarchicalSAPToolRegistry {
 
         // Search across all services
         for (const service of this.discoveredServices) {
+            // Agent-specific service filtering
+            if (this.agentId && !this.configService.isServiceAllowed(service.id, this.agentConfig)) {
+                continue;
+            }
+
             // Filter by category first
             if (category !== "all") {
                 const serviceCategories = this.serviceCategories.get(service.id) || [];
@@ -517,25 +635,73 @@ export class HierarchicalSAPToolRegistry {
 
             if (serviceScore > 0 || !query) {
                 // Always include full entity schemas even for service-level matches
-                const entities = service.metadata?.entityTypes?.map(entity => ({
-                    name: entity.name,
-                    entitySet: entity.entitySet,
-                    keyProperties: entity.keys,
-                    propertyCount: entity.properties.length,
-                    capabilities: {
-                        readable: true,
-                        creatable: entity.creatable,
-                        updatable: entity.updatable,
-                        deletable: entity.deletable
-                    },
-                    properties: entity.properties.map(prop => ({
-                        name: prop.name,
-                        type: prop.type,
-                        nullable: prop.nullable,
-                        maxLength: prop.maxLength,
-                        isKey: entity.keys.includes(prop.name)
-                    }))
-                })) || [];
+                let entities = service.metadata?.entityTypes?.map(entity => {
+
+                    // Agent-specific capability overrides
+                    let canRead = true;
+                    let canCreate = entity.creatable;
+                    let canUpdate = entity.updatable;
+                    let canDelete = entity.deletable;
+
+                    if (this.agentId) {
+                         const upperAgentId = this.agentId.toUpperCase();
+                         const key = `AS_${upperAgentId}_${service.id}_${entity.name}_capability`;
+                         const val = process.env[key] || process.env[key.toUpperCase()];
+                         if (val) {
+                             let caps = [];
+                             try {
+                                  const parsed = JSON.parse(val);
+                                  caps = Array.isArray(parsed) ? parsed : [parsed];
+                             } catch {
+                                  caps = val.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+                             }
+                             canRead = caps.includes('read');
+                             canCreate = caps.includes('create');
+                             canUpdate = caps.includes('update');
+                             canDelete = caps.includes('delete');
+                         }
+                    }
+
+                    return {
+                        name: entity.name,
+                        entitySet: entity.entitySet,
+                        keyProperties: entity.keys,
+                        propertyCount: entity.properties.length,
+                        capabilities: {
+                            readable: canRead,
+                            creatable: canCreate,
+                            updatable: canUpdate,
+                            deletable: canDelete
+                        },
+                        properties: entity.properties.map(prop => ({
+                            name: prop.name,
+                            type: prop.type,
+                            nullable: prop.nullable,
+                            maxLength: prop.maxLength,
+                            isKey: entity.keys.includes(prop.name)
+                        }))
+                    };
+                }) || [];
+
+                // Agent-specific entity whitelist
+                if (this.agentId) {
+                     const upperAgentId = this.agentId.toUpperCase();
+                     const key = `AS_${upperAgentId}_${service.id}_entities`;
+                     const val = process.env[key] || process.env[key.toUpperCase()];
+                     if (val) {
+                         let allowedEntities = [];
+                         try {
+                              const parsed = JSON.parse(val);
+                              allowedEntities = Array.isArray(parsed) ? parsed : [parsed];
+                         } catch {
+                              allowedEntities = val.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+                         }
+                         if (allowedEntities.length > 0) {
+                             const allowedLower = allowedEntities.map(e => e.toLowerCase());
+                             entities = entities.filter(e => allowedLower.includes(e.name.toLowerCase()));
+                         }
+                     }
+                }
 
                 matches.push({
                     type: "service",
@@ -557,6 +723,14 @@ export class HierarchicalSAPToolRegistry {
             if (service.metadata?.entityTypes && query) {
                 for (const entity of service.metadata.entityTypes) {
                     const entityNameLower = entity.name.toLowerCase();
+
+                    // Agent-specific entity whitelist
+                    if (this.agentId && this.agentConfig.entitiesWhitelist[service.id.toLowerCase()]) {
+                         const allowedEntities = this.agentConfig.entitiesWhitelist[service.id.toLowerCase()].map(e => e.toLowerCase());
+                         if (allowedEntities.length > 0 && !allowedEntities.includes(entityNameLower)) {
+                             continue;
+                         }
+                    }
                     let entityScore = 0;
 
                     // Match entity name with multi-word support
@@ -565,7 +739,7 @@ export class HierarchicalSAPToolRegistry {
                     }
 
                     // Match property names with multi-word support
-                    let matchedProperties: string[] = [];
+                    const matchedProperties: string[] = [];
                     for (const prop of entity.properties) {
                         if (this.matchesQuery(prop.name.toLowerCase(), query, searchMode)) {
                             matchedProperties.push(prop.name);
@@ -586,12 +760,37 @@ export class HierarchicalSAPToolRegistry {
                                 entitySet: entity.entitySet,
                                 keyProperties: entity.keys,
                                 propertyCount: entity.properties.length,
-                                capabilities: {
-                                    readable: true,
-                                    creatable: entity.creatable,
-                                    updatable: entity.updatable,
-                                    deletable: entity.deletable
-                                },
+                                capabilities: (() => {
+                                    let canRead = true;
+                                    let canCreate = entity.creatable;
+                                    let canUpdate = entity.updatable;
+                                    let canDelete = entity.deletable;
+
+                                    if (this.agentId) {
+                                         const upperAgentId = this.agentId.toUpperCase();
+                                         const key = `AS_${upperAgentId}_${service.id}_${entity.name}_capability`;
+                                         const val = process.env[key] || process.env[key.toUpperCase()];
+                                         if (val) {
+                                             let caps = [];
+                                             try {
+                                                  const parsed = JSON.parse(val);
+                                                  caps = Array.isArray(parsed) ? parsed : [parsed];
+                                             } catch {
+                                                  caps = val.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+                                             }
+                                             canRead = caps.includes('read');
+                                             canCreate = caps.includes('create');
+                                             canUpdate = caps.includes('update');
+                                             canDelete = caps.includes('delete');
+                                         }
+                                    }
+                                    return {
+                                        readable: canRead,
+                                        creatable: canCreate,
+                                        updatable: canUpdate,
+                                        deletable: canDelete
+                                    };
+                                })(),
                                 // Always include full schema for maximum efficiency
                                 properties: entity.properties.map(prop => ({
                                     name: prop.name,
@@ -1058,7 +1257,7 @@ export class HierarchicalSAPToolRegistry {
         try {
             const serviceId = args.serviceId as string;
             const entityName = args.entityName as string;
-            let operation = (args.operation as string)?.toLowerCase();
+            const operation = (args.operation as string)?.toLowerCase();
             const parameters = args.parameters as Record<string, unknown> || {};
 
             // Validate operation for better Copilot compatibility
@@ -1085,6 +1284,18 @@ export class HierarchicalSAPToolRegistry {
 
             // Validate service
             const service = this.discoveredServices.find(s => s.id === serviceId);
+
+            // Agent-specific service filtering
+            if (service && this.agentId && !this.configService.isServiceAllowed(service.id, this.agentConfig)) {
+                return {
+                    content: [{
+                        type: "text" as const,
+                        text: `ERROR: Unauthorized access to service '${serviceId}' for agent ${this.agentId}`
+                    }],
+                    isError: true
+                };
+            }
+
             if (!service) {
                 // Check if user provided a title instead of an id
                 const serviceByTitle = this.discoveredServices.find(s => s.title.toLowerCase() === serviceId.toLowerCase());
@@ -1110,6 +1321,32 @@ export class HierarchicalSAPToolRegistry {
 
             // Validate entity
             const entityType = service.metadata?.entityTypes?.find(e => e.name === entityName);
+
+            // Agent-specific entity filtering
+            if (entityType && this.agentId) {
+                 const upperAgentId = this.agentId.toUpperCase();
+                 const key = `AS_${upperAgentId}_${service.id}_entities`;
+                 const val = process.env[key] || process.env[key.toUpperCase()];
+                 if (val) {
+                     let allowedEntities = [];
+                     try {
+                          const parsed = JSON.parse(val);
+                          allowedEntities = Array.isArray(parsed) ? parsed : [parsed];
+                     } catch {
+                          allowedEntities = val.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+                     }
+                     if (allowedEntities.length > 0 && !allowedEntities.map(e => e.toLowerCase()).includes(entityType.name.toLowerCase())) {
+                         return {
+                             content: [{
+                                 type: "text" as const,
+                                 text: `ERROR: Unauthorized access to entity '${entityName}' in service '${serviceId}' for agent ${this.agentId}`
+                             }],
+                             isError: true
+                         };
+                     }
+                 }
+            }
+
             if (!entityType) {
                 return {
                     content: [{
@@ -1131,8 +1368,36 @@ export class HierarchicalSAPToolRegistry {
             let response;
             let operationDescription = "";
 
+            // Effective capabilities
+            let canRead = true;
+            let canCreate = entityType.creatable;
+            let canUpdate = entityType.updatable;
+            let canDelete = entityType.deletable;
+
+            if (this.agentId) {
+                 const upperAgentId = this.agentId.toUpperCase();
+                 const key = `AS_${upperAgentId}_${service.id}_${entityType.name}_capability`;
+                 const val = process.env[key] || process.env[key.toUpperCase()];
+                 if (val) {
+                     let caps = [];
+                     try {
+                          const parsed = JSON.parse(val);
+                          caps = Array.isArray(parsed) ? parsed : [parsed];
+                     } catch {
+                          caps = val.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+                     }
+                     canRead = caps.includes('read');
+                     canCreate = caps.includes('create');
+                     canUpdate = caps.includes('update');
+                     canDelete = caps.includes('delete');
+                 }
+            }
+
             switch (operation) {
                 case 'read':
+                    if (!canRead) {
+                        throw new Error(`Entity '${entityName}' does not support read operations for this agent`);
+                    }
                     operationDescription = `Reading ${entityName} entities`;
                     if (queryOptions.$top) operationDescription += ` (top ${queryOptions.$top})`;
                     if (queryOptions.$filter) operationDescription += ` with filter: ${queryOptions.$filter}`;
@@ -1141,6 +1406,9 @@ export class HierarchicalSAPToolRegistry {
                     break;
 
                 case 'read-single': {
+                    if (!canRead) {
+                        throw new Error(`Entity '${entityName}' does not support read operations for this agent`);
+                    }
                     const keyValue = this.buildKeyValue(entityType, parameters);
                     operationDescription = `Reading single ${entityName} with key: ${keyValue}`;
                     response = await this.sapClient.readEntity(service.url, entityType.entitySet!, keyValue, false);
@@ -1148,16 +1416,16 @@ export class HierarchicalSAPToolRegistry {
                 }
 
                 case 'create':
-                    if (!entityType.creatable) {
-                        throw new Error(`Entity '${entityName}' does not support create operations`);
+                    if (!canCreate) {
+                        throw new Error(`Entity '${entityName}' does not support create operations for this agent`);
                     }
                     operationDescription = `Creating new ${entityName}`;
                     response = await this.sapClient.createEntity(service.url, entityType.entitySet!, parameters);
                     break;
 
                 case 'update':
-                    if (!entityType.updatable) {
-                        throw new Error(`Entity '${entityName}' does not support update operations`);
+                    if (!canUpdate) {
+                        throw new Error(`Entity '${entityName}' does not support update operations for this agent`);
                     }
                     {
                         const updateKeyValue = this.buildKeyValue(entityType, parameters);
@@ -1169,8 +1437,8 @@ export class HierarchicalSAPToolRegistry {
                     break;
 
                 case 'delete':
-                    if (!entityType.deletable) {
-                        throw new Error(`Entity '${entityName}' does not support delete operations`);
+                    if (!canDelete) {
+                        throw new Error(`Entity '${entityName}' does not support delete operations for this agent`);
                     }
                     {
                         const deleteKeyValue = this.buildKeyValue(entityType, parameters);
@@ -1361,7 +1629,12 @@ export class HierarchicalSAPToolRegistry {
                         dual_auth_model: {
                             discovery: 'Uses technical user for service metadata discovery',
                             execution: 'Uses your JWT token for all data operations'
-                        }
+                        },
+                        agent_context: this.agentId ? {
+                            id: this.agentId,
+                            has_custom_config: this.agentConfig.servicePatterns.length > 0,
+                            config: this.agentConfig
+                        } : undefined
                     } : {
                         has_token: false,
                         message: 'User must authenticate before accessing SAP data',
