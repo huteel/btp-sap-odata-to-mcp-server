@@ -105,7 +105,9 @@ async function getOrCreateSession(sessionId?: string, userToken?: string, agentI
 
     try {
         // Create and initialize MCP server with user token if available
+        logger.info(`⚙️ Initializing createMCPServer for agentId=${agentId || 'none'}`);
         const mcpServer = await createMCPServer(discoveredServices, userToken, agentId);
+        logger.info(`✅ createMCPServer completed for session ${newSessionId}`);
 
         // Create HTTP transport
         const transport = new StreamableHTTPServerTransport({
@@ -202,7 +204,7 @@ export function createApp(): express.Application {
         // SSE requests typically have 'text/event-stream' in Accept header or a specific mcp-session-id
         if (req.headers['mcp-session-id'] || req.headers.accept?.includes('text/event-stream')) {
             try {
-                let sessionId = req.headers['mcp-session-id'] as string | undefined;
+                const sessionId = req.headers['mcp-session-id'] as string | undefined;
                 const agentId = getAgentId(req);
 
                 let session;
@@ -354,15 +356,19 @@ export function createApp(): express.Application {
             const agentId = getAgentId(req);
             let session;
 
+            logger.info(`📥 POST /mcp received. SessionId: ${sessionId || 'none'}, AgentId: ${agentId || 'none'}`);
+
             if (sessionId && sessions.has(sessionId)) {
                 // Reuse existing session
+                logger.info(`♻️ Reusing session ${sessionId}`);
                 session = await getOrCreateSession(sessionId, authReq.jwtToken, agentId);
             } else if (!sessionId && isInitializeRequest(authReq.body)) {
                 // New initialization request with user token if available
+                logger.info(`🆕 Initialize request detected. Creating new session.`);
                 session = await getOrCreateSession(undefined, authReq.jwtToken, agentId);
             } else {
                 // Invalid request
-                logger.warn(`❌ Invalid MCP request - no session ID and not initialize request`);
+                logger.warn(`❌ Invalid MCP request - no session ID and not initialize request. Body: ${JSON.stringify(authReq.body)}`);
                 return res.status(400).json({
                     jsonrpc: '2.0',
                     error: {

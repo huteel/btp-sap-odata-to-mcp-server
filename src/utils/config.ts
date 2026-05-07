@@ -127,9 +127,48 @@ export class Config {
                  } catch {
                      config.servicePatterns = val.split(',').map(s => s.trim()).filter(Boolean);
                  }
+            } else if (key.startsWith(`AS_${upperAgentId}_`) && key.toLowerCase().endsWith('_entities')) {
+                // e.g. AS_UA99999_ZAPI_BUSINESS_PARTNER_0001_ENTITIES
+                const parts = key.split('_');
+                // The service ID is everything between AS_UA99999_ and _ENTITIES
+                // Length is at least 4: AS, UA99999, SERVICE_ID..., ENTITIES
+                if (parts.length >= 4) {
+                    const serviceId = parts.slice(2, parts.length - 1).join('_').toLowerCase();
+                    const val = process.env[key] || '';
+                    try {
+                        const parsed = JSON.parse(val);
+                        config.entitiesWhitelist[serviceId] = Array.isArray(parsed) ? parsed : [parsed];
+                    } catch {
+                        config.entitiesWhitelist[serviceId] = val.split(',').map(s => s.trim()).filter(Boolean);
+                    }
+                }
+            } else if (key.startsWith(`AS_${upperAgentId}_`) && key.toLowerCase().endsWith('_capability')) {
+                // e.g. AS_UA99999_ZAPI_BUSINESS_PARTNER_0001_A_BUSINESSPARTNERTYPE_CAPABILITY
+                // We don't know the exact split between serviceId and entityName from the key alone.
+                // We'll parse it out during categorizeServices or directly loop over known services.
             }
-
         }
+
+        // Capabilities are hard to parse from just keys since both service ID and entity names have underscores.
+        // Instead, we will store all capabilities as a flat map from the env var key (lowercase) to the parsed array
+        // We will modify the return type or handle it in a more resilient way. Let's do it by scanning the env again later if needed.
+        // Wait, better yet, we just grab them dynamically or we parse them into a flat record.
+        const flatCapabilities: Record<string, string[]> = {};
+        for (const key of envKeys) {
+             if (key.startsWith(`AS_${upperAgentId}_`) && key.toLowerCase().endsWith('_capability')) {
+                 const val = process.env[key] || '';
+                 let parsedCaps: string[] = [];
+                 try {
+                     const parsed = JSON.parse(val);
+                     parsedCaps = Array.isArray(parsed) ? parsed : [parsed];
+                 } catch {
+                     parsedCaps = val.split(',').map(s => s.trim()).filter(Boolean);
+                 }
+                 flatCapabilities[key.toLowerCase()] = parsedCaps;
+             }
+        }
+        // We will assign this to a new property or keep it in the returned object
+        (config as any).flatCapabilities = flatCapabilities;
 
         return config;
     }

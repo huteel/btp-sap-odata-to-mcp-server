@@ -107,7 +107,13 @@ export async function createMCPServer(discoveredServices: ODataService[], userTo
     if (userToken) {
         server.setUserToken(userToken);
     }
-    await server.initialize();
+    try {
+        await server.initialize();
+    } catch (e) {
+        const logger = new Logger('mcp-server');
+        logger.error(`❌ FATAL Error during server.initialize() for agentId ${agentId}:`, e);
+        throw e;
+    }
     return server;
 }
 

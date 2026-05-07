@@ -39,8 +39,14 @@ export class HierarchicalSAPToolRegistry {
         private discoveredServices: ODataService[],
         private agentId?: string
     ) {
-        this.agentConfig = this.configService.getAgentConfig(this.agentId || "");
-        this.categorizeServices();
+        try {
+            this.agentConfig = this.configService.getAgentConfig(this.agentId || "");
+            this.logger.info(`Agent config loaded for ${this.agentId || 'none'}: ${JSON.stringify(this.agentConfig)}`);
+            this.categorizeServices();
+        } catch (e) {
+            this.logger.error(`❌ FATAL Error in HierarchicalSAPToolRegistry constructor for agentId ${this.agentId}:`, e);
+            throw e;
+        }
     }
 
     /**
@@ -317,18 +323,10 @@ export class HierarchicalSAPToolRegistry {
 
             // Agent-specific entity filtering
             if (entityType && this.agentId) {
-                 const upperAgentId = this.agentId.toUpperCase();
-                 const key = `AS_${upperAgentId}_${service.id}_entities`;
-                 const val = process.env[key] || process.env[key.toUpperCase()];
-                 if (val) {
-                     let allowedEntities = [];
-                     try {
-                          const parsed = JSON.parse(val);
-                          allowedEntities = Array.isArray(parsed) ? parsed : [parsed];
-                     } catch {
-                          allowedEntities = val.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
-                     }
-                     if (allowedEntities.length > 0 && !allowedEntities.map(e => e.toLowerCase()).includes(entityType.name.toLowerCase())) {
+                 const allowedEntities = this.agentConfig.entitiesWhitelist[service.id.toLowerCase()];
+                 if (allowedEntities && allowedEntities.length > 0) {
+                     const lowerAllowed = allowedEntities.map(e => e.toLowerCase());
+                     if (!lowerAllowed.includes(entityType.name.toLowerCase())) {
                          return {
                              content: [{
                                  type: "text" as const,
@@ -493,21 +491,10 @@ export class HierarchicalSAPToolRegistry {
 
                 // Agent-specific entity whitelist
                 if (this.agentId) {
-                     const upperAgentId = this.agentId.toUpperCase();
-                     const key = `AS_${upperAgentId}_${service.id}_entities`;
-                     const val = process.env[key] || process.env[key.toUpperCase()];
-                     if (val) {
-                         let allowedEntities = [];
-                         try {
-                              const parsed = JSON.parse(val);
-                              allowedEntities = Array.isArray(parsed) ? parsed : [parsed];
-                         } catch {
-                              allowedEntities = val.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
-                         }
-                         if (allowedEntities.length > 0) {
-                             const allowedLower = allowedEntities.map(e => e.toLowerCase());
-                             entities = entities.filter(e => allowedLower.includes(e.entityName.toLowerCase()));
-                         }
+                     const allowedEntities = this.agentConfig.entitiesWhitelist[service.id.toLowerCase()];
+                     if (allowedEntities && allowedEntities.length > 0) {
+                          const lowerAllowed = allowedEntities.map(e => e.toLowerCase());
+                          entities = entities.filter(e => lowerAllowed.includes(e.entityName.toLowerCase()));
                      }
                 }
 
@@ -532,18 +519,10 @@ export class HierarchicalSAPToolRegistry {
 
                     // Agent-specific entity whitelist
                     if (this.agentId) {
-                         const upperAgentId = this.agentId.toUpperCase();
-                         const key = `AS_${upperAgentId}_${service.id}_entities`;
-                         const val = process.env[key] || process.env[key.toUpperCase()];
-                         if (val) {
-                             let allowedEntities = [];
-                             try {
-                                  const parsed = JSON.parse(val);
-                                  allowedEntities = Array.isArray(parsed) ? parsed : [parsed];
-                             } catch {
-                                  allowedEntities = val.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
-                             }
-                             if (allowedEntities.length > 0 && !allowedEntities.map(e => e.toLowerCase()).includes(entityNameLower)) {
+                         const allowedEntities = this.agentConfig.entitiesWhitelist[service.id.toLowerCase()];
+                         if (allowedEntities && allowedEntities.length > 0) {
+                             const lowerAllowed = allowedEntities.map(e => e.toLowerCase());
+                             if (!lowerAllowed.includes(entityNameLower)) {
                                  continue;
                              }
                          }
@@ -685,21 +664,10 @@ export class HierarchicalSAPToolRegistry {
 
                 // Agent-specific entity whitelist
                 if (this.agentId) {
-                     const upperAgentId = this.agentId.toUpperCase();
-                     const key = `AS_${upperAgentId}_${service.id}_entities`;
-                     const val = process.env[key] || process.env[key.toUpperCase()];
-                     if (val) {
-                         let allowedEntities = [];
-                         try {
-                              const parsed = JSON.parse(val);
-                              allowedEntities = Array.isArray(parsed) ? parsed : [parsed];
-                         } catch {
-                              allowedEntities = val.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
-                         }
-                         if (allowedEntities.length > 0) {
-                             const allowedLower = allowedEntities.map(e => e.toLowerCase());
-                             entities = entities.filter(e => allowedLower.includes(e.name.toLowerCase()));
-                         }
+                     const allowedEntities = this.agentConfig.entitiesWhitelist[service.id.toLowerCase()];
+                     if (allowedEntities && allowedEntities.length > 0) {
+                          const lowerAllowed = allowedEntities.map(e => e.toLowerCase());
+                          entities = entities.filter(e => lowerAllowed.includes(e.name.toLowerCase()));
                      }
                 }
 
@@ -1324,18 +1292,10 @@ export class HierarchicalSAPToolRegistry {
 
             // Agent-specific entity filtering
             if (entityType && this.agentId) {
-                 const upperAgentId = this.agentId.toUpperCase();
-                 const key = `AS_${upperAgentId}_${service.id}_entities`;
-                 const val = process.env[key] || process.env[key.toUpperCase()];
-                 if (val) {
-                     let allowedEntities = [];
-                     try {
-                          const parsed = JSON.parse(val);
-                          allowedEntities = Array.isArray(parsed) ? parsed : [parsed];
-                     } catch {
-                          allowedEntities = val.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
-                     }
-                     if (allowedEntities.length > 0 && !allowedEntities.map(e => e.toLowerCase()).includes(entityType.name.toLowerCase())) {
+                 const allowedEntities = this.agentConfig.entitiesWhitelist[service.id.toLowerCase()];
+                 if (allowedEntities && allowedEntities.length > 0) {
+                     const lowerAllowed = allowedEntities.map(e => e.toLowerCase());
+                     if (!lowerAllowed.includes(entityType.name.toLowerCase())) {
                          return {
                              content: [{
                                  type: "text" as const,
