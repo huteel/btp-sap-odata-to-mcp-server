@@ -155,6 +155,15 @@ async function getOrCreateSession(sessionId?: string, userToken?: string, agentI
 export function createApp(): express.Application {
     const app = express();
 
+    // 🚨 GLOBAL REQUEST LOGGER - AT THE VERY TOP 🚨
+    app.use((req, res, next) => {
+        logger.info(`🚨 GLOBAL LOGGER: Incoming request: ${req.method} ${req.path}`, {
+            headers: req.headers,
+            query: req.query
+        });
+        next();
+    });
+
     // Security and parsing middleware
     app.use(helmet({
         contentSecurityPolicy: {
@@ -348,7 +357,7 @@ export function createApp(): express.Application {
 
     // Main MCP endpoint - handles all MCP communication
     // SECURITY: Optional authentication - allows Claude Desktop to connect without OAuth
-    app.post('/mcp', authService.authenticateJWT() as express.RequestHandler, async (req, res) => {
+    app.post('/mcp', authService.optionalAuthenticateJWT() as express.RequestHandler, async (req, res) => {
         const authReq = req as AuthRequest;
         try {
             // Get session ID from header
