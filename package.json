@@ -11,7 +11,7 @@
   },
   "scripts": {
     "build": "tsc && npm run copy-static",
-    "copy-static": "mkdir -p dist/public && cp -r src/public/* dist/public/ || xcopy src\\public dist\\public /E /I /Y 2>NUL || echo 'Static files copied'",
+    "copy-static": "mkdir -p dist/public && cp -r src/public/* dist/public/ || xcopy src\\public dist\\public /E /I /Y > /dev/null 2>&1 || echo 'Static files copied'",
     "build:watch": "tsc --watch",
     "clean": "rm -rf dist node_modules/.cache",
     "start": "node dist/index.js",
