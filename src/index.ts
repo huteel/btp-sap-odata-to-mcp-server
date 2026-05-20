@@ -360,6 +360,16 @@ export function createApp(): express.Application {
     app.post('/mcp', authService.optionalAuthenticateJWT() as express.RequestHandler, async (req, res) => {
         const authReq = req as AuthRequest;
         try {
+            // Copilot Studio fix: ensure text/event-stream is present in Accept header since StreamableHTTPServerTransport demands it.
+            if (!req.headers.accept) {
+                req.headers.accept = "application/json, text/event-stream";
+            } else if (!req.headers.accept.includes("text/event-stream")) {
+                req.headers.accept = `${req.headers.accept}, text/event-stream`;
+            }
+            if (!req.headers.accept.includes("application/json")) {
+                req.headers.accept = `application/json, ${req.headers.accept}`;
+            }
+
             // Get session ID from header
             const sessionId = authReq.headers['mcp-session-id'] as string | undefined;
             const agentId = getAgentId(req);
