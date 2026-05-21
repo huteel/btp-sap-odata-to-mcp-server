@@ -155,15 +155,6 @@ async function getOrCreateSession(sessionId?: string, userToken?: string, agentI
 export function createApp(): express.Application {
     const app = express();
 
-    // 🚨 GLOBAL REQUEST LOGGER - AT THE VERY TOP 🚨
-    app.use((req, res, next) => {
-        logger.info(`🚨 GLOBAL LOGGER: Incoming request: ${req.method} ${req.path}`, {
-            headers: req.headers,
-            query: req.query
-        });
-        next();
-    });
-
     // Security and parsing middleware
     app.use(helmet({
         contentSecurityPolicy: {
@@ -182,7 +173,7 @@ export function createApp(): express.Application {
             : true, // Allow all origins in development
         credentials: true,
         exposedHeaders: ['Mcp-Session-Id'],
-        allowedHeaders: ['Content-Type', 'mcp-session-id', 'MCP-Protocol-Version']
+        allowedHeaders: ['Content-Type', 'Authorization', 'mcp-session-id', 'MCP-Protocol-Version']
     }));
 
     app.use(express.json({ limit: '10mb' }));
@@ -205,42 +196,6 @@ export function createApp(): express.Application {
             activeSessions: sessions.size,
             version: process.env.npm_package_version || '1.0.0'
         });
-    });
-
-
-    // Handle GET requests for server-to-client notifications via SSE
-    app.get('/mcp', async (req, res, next) => {
-        // SSE requests typically have 'text/event-stream' in Accept header or a specific mcp-session-id
-        if (req.headers['mcp-session-id'] || req.headers.accept?.includes('text/event-stream')) {
-            try {
-                const sessionId = req.headers['mcp-session-id'] as string | undefined;
-                const agentId = getAgentId(req);
-
-                let session;
-                if (sessionId && sessions.has(sessionId)) {
-                    session = sessions.get(sessionId)!;
-                } else {
-                    logger.info(`🆕 Initializing new SSE session for agent: ${agentId || 'none'}`);
-                    const authHeader = req.headers.authorization;
-                    let token;
-                    if (authHeader && authHeader.startsWith('Bearer ')) {
-                        token = authHeader.substring(7);
-                    }
-                    session = await getOrCreateSession(sessionId, token, agentId);
-                }
-
-                await session.transport.handleRequest(req, res);
-
-            } catch (error) {
-                logger.error('❌ Error handling SSE request:', error);
-                if (!res.headersSent) {
-                    res.status(500).json({ error: 'Internal server error' });
-                }
-            }
-        } else {
-            // Not an SSE request, fall through to the info endpoint
-            next();
-        }
     });
 
     // MCP server info endpoint - Authentication-aware response
@@ -356,8 +311,9 @@ export function createApp(): express.Application {
     });
 
     // Main MCP endpoint - handles all MCP communication
-    // SECURITY: Optional authentication - allows Claude Desktop to connect without OAuth
-    app.post('/mcp', authService.optionalAuthenticateJWT() as express.RequestHandler, async (req, res) => {
+    // SECURITY: authenticateJWT skips auth when XSUAA is not configured (dev mode),
+    // otherwise requires valid JWT token for MCP operations
+    app.post('/mcp', authService.authenticateJWT() as express.RequestHandler, async (req, res) => {
         const authReq = req as AuthRequest;
         try {
             // Get session ID from header
@@ -407,7 +363,29 @@ export function createApp(): express.Application {
         }
     });
 
+    // Handle GET requests for server-to-client notifications via SSE
+    // Only handles EXISTING sessions - new sessions must be created via POST /mcp initialize
+    app.get('/mcp', async (req, res) => {
+        try {
+            const sessionId = req.headers['mcp-session-id'] as string | undefined;
 
+            if (!sessionId || !sessions.has(sessionId)) {
+                logger.warn(`❌ Invalid session ID for SSE: ${sessionId}`);
+                return res.status(400).json({
+                    error: 'Invalid or missing session ID'
+                });
+            }
+
+            const session = sessions.get(sessionId)!;
+            await session.transport.handleRequest(req, res);
+
+        } catch (error) {
+            logger.error('❌ Error handling SSE request:', error);
+            if (!res.headersSent) {
+                res.status(500).json({ error: 'Internal server error' });
+            }
+        }
+    });
 
     // Handle session termination
     app.delete('/mcp', async (req, res) => {
