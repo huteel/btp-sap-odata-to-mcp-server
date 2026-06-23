@@ -302,7 +302,7 @@ export class HierarchicalSAPToolRegistry {
                 return {
                     content: [{
                         type: "text" as const,
-                        text: `ERROR: Unauthorized access to service '${serviceId}' for agent ${this.agentId}`
+                        text: `ERROR: Service '${serviceId}' is not allowed for this agent (${this.agentId})`
                     }],
                     isError: true
                 };
@@ -330,7 +330,7 @@ export class HierarchicalSAPToolRegistry {
                          return {
                              content: [{
                                  type: "text" as const,
-                                 text: `ERROR: Unauthorized access to entity '${entityName}' in service '${serviceId}' for agent ${this.agentId}`
+                                 text: `ERROR: Entity '${entityName}' of service '${serviceId}' is not allowed for this agent (${this.agentId})`
                              }],
                              isError: true
                          };
@@ -371,17 +371,9 @@ export class HierarchicalSAPToolRegistry {
                     let canDelete = entityType.deletable;
 
                     if (this.agentId) {
-                         const upperAgentId = this.agentId.toUpperCase();
-                         const key = `AS_${upperAgentId}_${service.id}_${entityType.name}_capability`;
-                         const val = process.env[key] || process.env[key.toUpperCase()];
-                         if (val) {
-                             let caps = [];
-                             try {
-                                  const parsed = JSON.parse(val);
-                                  caps = Array.isArray(parsed) ? parsed : [parsed];
-                             } catch {
-                                  caps = val.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
-                             }
+                         const lookupKey = `as_${this.agentId}_${service.id}_${entityType.name}_capability`.toLowerCase();
+                         const caps = this.agentConfig.flatCapabilities[lookupKey];
+                         if (caps) {
                              canRead = caps.includes('read');
                              canCreate = caps.includes('create');
                              canUpdate = caps.includes('update');
@@ -623,17 +615,9 @@ export class HierarchicalSAPToolRegistry {
                     let canDelete = entity.deletable;
 
                     if (this.agentId) {
-                         const upperAgentId = this.agentId.toUpperCase();
-                         const key = `AS_${upperAgentId}_${service.id}_${entity.name}_capability`;
-                         const val = process.env[key] || process.env[key.toUpperCase()];
-                         if (val) {
-                             let caps = [];
-                             try {
-                                  const parsed = JSON.parse(val);
-                                  caps = Array.isArray(parsed) ? parsed : [parsed];
-                             } catch {
-                                  caps = val.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
-                             }
+                         const lookupKey = `as_${this.agentId}_${service.id}_${entity.name}_capability`.toLowerCase();
+                         const caps = this.agentConfig.flatCapabilities[lookupKey];
+                         if (caps) {
                              canRead = caps.includes('read');
                              canCreate = caps.includes('create');
                              canUpdate = caps.includes('update');
@@ -735,17 +719,9 @@ export class HierarchicalSAPToolRegistry {
                                     let canDelete = entity.deletable;
 
                                     if (this.agentId) {
-                                         const upperAgentId = this.agentId.toUpperCase();
-                                         const key = `AS_${upperAgentId}_${service.id}_${entity.name}_capability`;
-                                         const val = process.env[key] || process.env[key.toUpperCase()];
-                                         if (val) {
-                                             let caps = [];
-                                             try {
-                                                  const parsed = JSON.parse(val);
-                                                  caps = Array.isArray(parsed) ? parsed : [parsed];
-                                             } catch {
-                                                  caps = val.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
-                                             }
+                                         const lookupKey = `as_${this.agentId}_${service.id}_${entity.name}_capability`.toLowerCase();
+                                         const caps = this.agentConfig.flatCapabilities[lookupKey];
+                                         if (caps) {
                                              canRead = caps.includes('read');
                                              canCreate = caps.includes('create');
                                              canUpdate = caps.includes('update');
@@ -1258,7 +1234,7 @@ export class HierarchicalSAPToolRegistry {
                 return {
                     content: [{
                         type: "text" as const,
-                        text: `ERROR: Unauthorized access to service '${serviceId}' for agent ${this.agentId}`
+                        text: `ERROR: Service '${serviceId}' is not allowed for this agent (${this.agentId})`
                     }],
                     isError: true
                 };
@@ -1299,7 +1275,7 @@ export class HierarchicalSAPToolRegistry {
                          return {
                              content: [{
                                  type: "text" as const,
-                                 text: `ERROR: Unauthorized access to entity '${entityName}' in service '${serviceId}' for agent ${this.agentId}`
+                                 text: `ERROR: Entity '${entityName}' of service '${serviceId}' is not allowed for this agent (${this.agentId})`
                              }],
                              isError: true
                          };
@@ -1335,17 +1311,9 @@ export class HierarchicalSAPToolRegistry {
             let canDelete = entityType.deletable;
 
             if (this.agentId) {
-                 const upperAgentId = this.agentId.toUpperCase();
-                 const key = `AS_${upperAgentId}_${service.id}_${entityType.name}_capability`;
-                 const val = process.env[key] || process.env[key.toUpperCase()];
-                 if (val) {
-                     let caps = [];
-                     try {
-                          const parsed = JSON.parse(val);
-                          caps = Array.isArray(parsed) ? parsed : [parsed];
-                     } catch {
-                          caps = val.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
-                     }
+                 const lookupKey = `as_${this.agentId}_${service.id}_${entityType.name}_capability`.toLowerCase();
+                 const caps = this.agentConfig.flatCapabilities[lookupKey];
+                 if (caps) {
                      canRead = caps.includes('read');
                      canCreate = caps.includes('create');
                      canUpdate = caps.includes('update');
@@ -1356,7 +1324,7 @@ export class HierarchicalSAPToolRegistry {
             switch (operation) {
                 case 'read':
                     if (!canRead) {
-                        throw new Error(`Entity '${entityName}' does not support read operations for this agent`);
+                        throw new Error(`Capability 'read' on entity '${entityName}' of service '${serviceId}' is not allowed for this agent (${this.agentId})`);
                     }
                     operationDescription = `Reading ${entityName} entities`;
                     if (queryOptions.$top) operationDescription += ` (top ${queryOptions.$top})`;
@@ -1367,7 +1335,7 @@ export class HierarchicalSAPToolRegistry {
 
                 case 'read-single': {
                     if (!canRead) {
-                        throw new Error(`Entity '${entityName}' does not support read operations for this agent`);
+                        throw new Error(`Capability 'read' on entity '${entityName}' of service '${serviceId}' is not allowed for this agent (${this.agentId})`);
                     }
                     const keyValue = this.buildKeyValue(entityType, parameters);
                     operationDescription = `Reading single ${entityName} with key: ${keyValue}`;
@@ -1377,7 +1345,7 @@ export class HierarchicalSAPToolRegistry {
 
                 case 'create':
                     if (!canCreate) {
-                        throw new Error(`Entity '${entityName}' does not support create operations for this agent`);
+                        throw new Error(`Capability 'create' on entity '${entityName}' of service '${serviceId}' is not allowed for this agent (${this.agentId})`);
                     }
                     operationDescription = `Creating new ${entityName}`;
                     response = await this.sapClient.createEntity(service.url, entityType.entitySet!, parameters);
@@ -1385,7 +1353,7 @@ export class HierarchicalSAPToolRegistry {
 
                 case 'update':
                     if (!canUpdate) {
-                        throw new Error(`Entity '${entityName}' does not support update operations for this agent`);
+                        throw new Error(`Capability 'update' on entity '${entityName}' of service '${serviceId}' is not allowed for this agent (${this.agentId})`);
                     }
                     {
                         const updateKeyValue = this.buildKeyValue(entityType, parameters);
@@ -1398,7 +1366,7 @@ export class HierarchicalSAPToolRegistry {
 
                 case 'delete':
                     if (!canDelete) {
-                        throw new Error(`Entity '${entityName}' does not support delete operations for this agent`);
+                        throw new Error(`Capability 'delete' on entity '${entityName}' of service '${serviceId}' is not allowed for this agent (${this.agentId})`);
                     }
                     {
                         const deleteKeyValue = this.buildKeyValue(entityType, parameters);

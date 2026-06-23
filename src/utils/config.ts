@@ -98,40 +98,48 @@ export class Config {
 
     /**
      * Get effective configuration for a specific agent based on AS_#agentid# environment variables.
+     * The agentId is the cdsBotId from the MCP client's native clientInfo, sent during the initialize handshake.
+     * Example env vars for cdsBotId "1234abcd-1234-5678-1234-1234567890ab":
+     *   AS_1234ABCD-1234-5678-1234-1234567890AB_ODATA_SERVICE_PATTERNS=YOUR_SERVICE_NAME
+     *   AS_1234ABCD-1234-5678-1234-1234567890AB_YOUR_SERVICE_NAME_entities=YourEntityType
+     *   AS_1234ABCD-1234-5678-1234-1234567890AB_YOUR_SERVICE_NAME_YourEntityType_capability=["read"]
      */
     getAgentConfig(agentId: string): {
         servicePatterns: string[];
         entitiesWhitelist: Record<string, string[]>;
         capabilities: Record<string, Record<string, string[]>>;
+        flatCapabilities: Record<string, string[]>;
     } {
         const config = {
             servicePatterns: [] as string[],
             entitiesWhitelist: {} as Record<string, string[]>,
-            capabilities: {} as Record<string, Record<string, string[]>>
+            capabilities: {} as Record<string, Record<string, string[]>>,
+            flatCapabilities: {} as Record<string, string[]>
         };
 
         if (!agentId) {
-             return config;
+            return config;
         }
 
         const upperAgentId = agentId.toUpperCase();
         const envKeys = Object.keys(process.env);
 
         for (const key of envKeys) {
+            const upperKey = key.toUpperCase();
             // Check AS_#agentid#_ODATA_SERVICE_PATTERNS
-            if (key === `AS_${upperAgentId}_ODATA_SERVICE_PATTERNS`) {
-                 const val = process.env[key] || '';
-                 try {
-                     const parsed = JSON.parse(val);
-                     config.servicePatterns = Array.isArray(parsed) ? parsed : [parsed];
-                 } catch {
-                     config.servicePatterns = val.split(',').map(s => s.trim()).filter(Boolean);
-                 }
-            } else if (key.startsWith(`AS_${upperAgentId}_`) && key.toLowerCase().endsWith('_entities')) {
-                // e.g. AS_UA99999_ZAPI_BUSINESS_PARTNER_0001_ENTITIES
-                const parts = key.split('_');
-                // The service ID is everything between AS_UA99999_ and _ENTITIES
-                // Length is at least 4: AS, UA99999, SERVICE_ID..., ENTITIES
+            if (upperKey === `AS_${upperAgentId}_ODATA_SERVICE_PATTERNS`) {
+                const val = process.env[key] || '';
+                try {
+                    const parsed = JSON.parse(val);
+                    config.servicePatterns = Array.isArray(parsed) ? parsed : [parsed];
+                } catch {
+                    config.servicePatterns = val.split(',').map(s => s.trim()).filter(Boolean);
+                }
+            } else if (upperKey.startsWith(`AS_${upperAgentId}_`) && upperKey.endsWith('_ENTITIES')) {
+                // e.g. AS_1234ABCD-1234-5678-1234-1234567890AB_YOUR_SERVICE_NAME_ENTITIES
+                const parts = upperKey.split('_');
+                // The service ID is everything between AS_<agentId>_ and _ENTITIES
+                // Length is at least 4: AS, <agentId>, SERVICE_ID..., ENTITIES
                 if (parts.length >= 4) {
                     const serviceId = parts.slice(2, parts.length - 1).join('_').toLowerCase();
                     const val = process.env[key] || '';
@@ -142,8 +150,8 @@ export class Config {
                         config.entitiesWhitelist[serviceId] = val.split(',').map(s => s.trim()).filter(Boolean);
                     }
                 }
-            } else if (key.startsWith(`AS_${upperAgentId}_`) && key.toLowerCase().endsWith('_capability')) {
-                // e.g. AS_UA99999_ZAPI_BUSINESS_PARTNER_0001_A_BUSINESSPARTNERTYPE_CAPABILITY
+            } else if (upperKey.startsWith(`AS_${upperAgentId}_`) && upperKey.endsWith('_CAPABILITY')) {
+                // e.g. AS_1234ABCD-1234-5678-1234-1234567890AB_YOUR_SERVICE_NAME_YOURENTITYTYPE_CAPABILITY
                 // We don't know the exact split between serviceId and entityName from the key alone.
                 // We'll parse it out during categorizeServices or directly loop over known services.
             }
@@ -155,17 +163,19 @@ export class Config {
         // Wait, better yet, we just grab them dynamically or we parse them into a flat record.
         const flatCapabilities: Record<string, string[]> = {};
         for (const key of envKeys) {
-             if (key.startsWith(`AS_${upperAgentId}_`) && key.toLowerCase().endsWith('_capability')) {
-                 const val = process.env[key] || '';
-                 let parsedCaps: string[] = [];
-                 try {
-                     const parsed = JSON.parse(val);
-                     parsedCaps = Array.isArray(parsed) ? parsed : [parsed];
-                 } catch {
-                     parsedCaps = val.split(',').map(s => s.trim()).filter(Boolean);
-                 }
-                 flatCapabilities[key.toLowerCase()] = parsedCaps;
-             }
+            const upperKey = key.toUpperCase();
+            if (upperKey.startsWith(`AS_${upperAgentId}_`) && upperKey.endsWith('_CAPABILITY')) {
+                const val = process.env[key] || '';
+                let parsedCaps: string[] = [];
+                try {
+                    const parsed = JSON.parse(val);
+                    const rawCaps = Array.isArray(parsed) ? parsed : [parsed];
+                    parsedCaps = rawCaps.map(s => String(s).toLowerCase());
+                } catch {
+                    parsedCaps = val.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+                }
+                flatCapabilities[key.toLowerCase()] = parsedCaps;
+            }
         }
         // We will assign this to a new property or keep it in the returned object
         (config as any).flatCapabilities = flatCapabilities;
@@ -186,7 +196,7 @@ export class Config {
             return true;
         }
 
-    // discoveryMode is not used, so removed for cleanup
+        // discoveryMode is not used, so removed for cleanup
         const servicePatterns = this.get('odata.servicePatterns', []);
         const exclusionPatterns = this.get('odata.exclusionPatterns', []);
 

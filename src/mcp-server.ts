@@ -38,6 +38,17 @@ export class MCPServer {
             ErrorHandler.handle(error);
         };
 
+        // Log native MCP client info after initialization handshake completes
+        this.mcpServer.server.oninitialized = () => {
+            const clientVersion = this.mcpServer.server.getClientVersion();
+            const clientCapabilities = this.mcpServer.server.getClientCapabilities();
+            this.logger.info(`🤝 MCP Handshake Complete - Client connected:`);
+            this.logger.info(`   Client Name: ${clientVersion?.name || 'unknown'}`);
+            this.logger.info(`   Client Version: ${clientVersion?.version || 'unknown'}`);
+            this.logger.info(`   Full Client Version Info: ${JSON.stringify(clientVersion || {}, null, 2)}`);
+            this.logger.info(`   Client Capabilities: ${JSON.stringify(clientCapabilities || {}, null, 2)}`);
+        };
+
         // Choose registry type based on env variable
         const registryType = process.env.MCP_TOOL_REGISTRY_TYPE || 'hierarchical';
         if (registryType === 'flat') {

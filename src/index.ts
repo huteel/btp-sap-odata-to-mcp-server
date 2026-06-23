@@ -34,10 +34,6 @@ function getBaseUrl(req: express.Request): string {
     return `${protocol}://${host}`;
 }
 
-// Helper function to extract agentId from URL parameters
-function getAgentId(req: express.Request): string | undefined {
-    return req.query.agentid as string | undefined;
-}
 
 /**
  * Modern Express server hosting SAP MCP Server with session management
@@ -55,6 +51,19 @@ const serviceConfigService = new ServiceDiscoveryConfigService(config, logger);
 const authService = new AuthService(logger, config);
 let discoveredServices: ODataService[] = [];
 
+// MCP client info received during initialize handshake (persisted per session)
+interface MCPClientInfo {
+    name?: string;
+    version?: string;
+    agentName?: string;
+    cdsBotId?: string;
+    channelId?: string;
+    appId?: string;
+    lcat?: string;
+    agentAuthenticationMode?: string;
+    [key: string]: unknown; // Preserve any extra fields clients send
+}
+
 // Session storage for HTTP transport with user context
 const sessions: Map<string, {
     server: MCPServer;
@@ -62,6 +71,8 @@ const sessions: Map<string, {
     createdAt: Date;
     userToken?: string;
     userId?: string;
+    mcpClientInfo?: MCPClientInfo;
+    agentId?: string; // Derived from MCP clientInfo.cdsBotId
 }> = new Map();
 
 /**
@@ -318,19 +329,49 @@ export function createApp(): express.Application {
         try {
             // Get session ID from header
             const sessionId = authReq.headers['mcp-session-id'] as string | undefined;
-            const agentId = getAgentId(req);
             let session;
 
-            logger.info(`📥 POST /mcp received. SessionId: ${sessionId || 'none'}, AgentId: ${agentId || 'none'}`);
+            // Compact per-request context log
+            const jwtUser = authReq.authInfo ? authReq.authInfo.getUserName() : undefined;
+            const userAgent = authReq.headers['user-agent'];
 
             if (sessionId && sessions.has(sessionId)) {
-                // Reuse existing session
-                logger.info(`♻️ Reusing session ${sessionId}`);
-                session = await getOrCreateSession(sessionId, authReq.jwtToken, agentId);
+                // Reuse existing session — agent context is already bound to the session
+                const existingSession = sessions.get(sessionId)!;
+                const ci = existingSession.mcpClientInfo;
+                const storedAgentId = existingSession.agentId;
+                logger.info(`📥 POST /mcp | Session: ${sessionId} | Agent (cdsBotId): ${storedAgentId || '-'} | JWT User: ${jwtUser || '-'} | UA: ${userAgent || '-'}`);
+                if (ci) {
+                    logger.info(`🤖 MCP Client Context | Name: ${ci.agentName || ci.name || '-'} | BotId: ${ci.cdsBotId || '-'} | Channel: ${ci.channelId || '-'}`);
+                }
+                session = await getOrCreateSession(sessionId, authReq.jwtToken, storedAgentId);
             } else if (!sessionId && isInitializeRequest(authReq.body)) {
-                // New initialization request with user token if available
+                // New initialization request — extract cdsBotId from native MCP clientInfo as agentId
+                const initParams = authReq.body?.params;
+                const mcpClientInfo: MCPClientInfo | undefined = initParams?.clientInfo ? { ...initParams.clientInfo } : undefined;
+                const agentId = mcpClientInfo?.cdsBotId as string | undefined;
+
+                logger.info(`📥 POST /mcp | Session: NEW | Agent (cdsBotId): ${agentId || '-'} | JWT User: ${jwtUser || '-'} | UA: ${userAgent || '-'}`);
                 logger.info(`🆕 Initialize request detected. Creating new session.`);
+                if (initParams) {
+                    logger.info(`🔍 MCP Client Info (native protocol): ${JSON.stringify(initParams.clientInfo || {}, null, 2)}`);
+                    logger.info(`   Protocol Version: ${initParams.protocolVersion || 'unknown'}`);
+                    if (initParams.capabilities && Object.keys(initParams.capabilities).length > 0) {
+                        logger.info(`   Client Capabilities: ${JSON.stringify(initParams.capabilities)}`);
+                    }
+                }
                 session = await getOrCreateSession(undefined, authReq.jwtToken, agentId);
+                // Store the MCP client info and agentId in the session for subsequent requests
+                if (sessions.has(session.sessionId)) {
+                    const sessionData = sessions.get(session.sessionId)!;
+                    if (mcpClientInfo) {
+                        sessionData.mcpClientInfo = mcpClientInfo;
+                    }
+                    if (agentId) {
+                        sessionData.agentId = agentId;
+                    }
+                    logger.info(`💾 Session ${session.sessionId} bound to agent: cdsBotId=${agentId || '-'}, agentName=${mcpClientInfo?.agentName || '-'}`);
+                }
             } else {
                 // Invalid request
                 logger.warn(`❌ Invalid MCP request - no session ID and not initialize request. Body: ${JSON.stringify(authReq.body)}`);
