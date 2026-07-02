@@ -60,6 +60,6 @@
       "cursor://anysphere.cursor-retrieval/oauth/user-test-mcp-server-local/callback"
     ],
     "token-validity": 3600,
-    "refresh-token-validity": 86400
+    "refresh-token-validity": 2592000
   }
 }

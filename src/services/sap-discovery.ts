@@ -214,7 +214,7 @@ export class SAPDiscoveryService {
     }
 
     private parseMetadata(metadataXml: string, odataVersion: string): ServiceMetadata {
-        const dom = new JSDOM(metadataXml);
+        const dom = new JSDOM(metadataXml, { contentType: "text/xml" });
         const xmlDoc = dom.window.document;
 
         const entitySets = this.extractEntitySets(xmlDoc);
@@ -276,13 +276,24 @@ export class SAPDiscoveryService {
 
     nodes.forEach((node: Element) => {
             const entityset: { [key: string]: string | boolean | null } = {};
-            ['name','entitytype', 'sap:creatable', 'sap:updatable', 'sap:deletable', 'sap:pageable', 'sap:addressable', 'sap:content-version'].forEach(attr => {
-                const [namespace, name ] = attr.split(":");
-                entityset[name||namespace] = node.getAttribute(attr);
+            // XML attributes are case-sensitive: use exact OData casing
+            // Map: XML attribute name -> dictionary key
+            const attrMap: [string, string][] = [
+                ['Name', 'name'],
+                ['EntityType', 'entitytype'],
+                ['sap:creatable', 'creatable'],
+                ['sap:updatable', 'updatable'],
+                ['sap:deletable', 'deletable'],
+                ['sap:pageable', 'pageable'],
+                ['sap:addressable', 'addressable'],
+                ['sap:content-version', 'content-version'],
+            ];
+            attrMap.forEach(([xmlAttr, key]) => {
+                entityset[key] = node.getAttribute(xmlAttr);
             });
-            ['sap:creatable', 'sap:updatable', 'sap:deletable', 'sap:pageable', 'sap:addressable'].forEach(attr => {
-                const [namespace, name ] = attr.split(":");
-                entityset[name||namespace] = node.getAttribute(attr) === "false" ? false : true;
+            // Convert boolean-like sap: attributes to actual booleans
+            ['creatable', 'updatable', 'deletable', 'pageable', 'addressable'].forEach(key => {
+                entityset[key] = entityset[key] === "false" ? false : true;
             });
             if (entityset.name) {
                 entitySets.push(entityset);

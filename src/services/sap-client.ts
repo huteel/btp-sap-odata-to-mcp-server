@@ -121,7 +121,12 @@ export class SAPClient {
     }
 
     async readEntity(servicePath: string, entitySet: string, key: string, isDiscovery = false) {
-        const url = `${servicePath}${entitySet}('${key}')`;
+        // Composite keys already contain quotes, e.g. Material='X',Plant='Y'
+        // Single keys need to be wrapped: ('value')
+        const isCompositeKey = key.includes('=');
+        const url = isCompositeKey
+            ? `${servicePath}${entitySet}(${key})`
+            : `${servicePath}${entitySet}('${key}')`;
 
         return this.executeRequest({
             method: 'GET',
@@ -141,7 +146,10 @@ export class SAPClient {
     }
 
     async updateEntity(servicePath: string, entitySet: string, key: string, data: unknown) {
-        const url = `${servicePath}${entitySet}('${key}')`;
+        const isCompositeKey = key.includes('=');
+        const url = isCompositeKey
+            ? `${servicePath}${entitySet}(${key})`
+            : `${servicePath}${entitySet}('${key}')`;
 
         return this.executeRequest({
             method: 'PATCH',
@@ -151,7 +159,10 @@ export class SAPClient {
     }
 
     async deleteEntity(servicePath: string, entitySet: string, key: string) {
-        const url = `${servicePath}${entitySet}('${key}')`;
+        const isCompositeKey = key.includes('=');
+        const url = isCompositeKey
+            ? `${servicePath}${entitySet}(${key})`
+            : `${servicePath}${entitySet}('${key}')`;
 
         return this.executeRequest({
             method: 'DELETE',

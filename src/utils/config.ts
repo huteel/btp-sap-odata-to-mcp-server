@@ -1,4 +1,5 @@
 import xsenv from '@sap/xsenv';
+import { SharePointConfigProvider } from '../services/sharepoint-config-provider.js';
 
 export class Config {
     private config: Map<string, unknown> = new Map();
@@ -109,18 +110,38 @@ export class Config {
         entitiesWhitelist: Record<string, string[]>;
         capabilities: Record<string, Record<string, string[]>>;
         flatCapabilities: Record<string, string[]>;
+        capabilityRules?: { servicePattern: string; entityPattern: string; capabilities: string[] }[];
     } {
         const config = {
             servicePatterns: [] as string[],
             entitiesWhitelist: {} as Record<string, string[]>,
             capabilities: {} as Record<string, Record<string, string[]>>,
-            flatCapabilities: {} as Record<string, string[]>
+            flatCapabilities: {} as Record<string, string[]>,
+            capabilityRules: [] as { servicePattern: string; entityPattern: string; capabilities: string[] }[]
         };
 
         if (!agentId) {
             return config;
         }
 
+        // ── Try external SharePoint config first ─────────────────────────
+        const externalProvider = SharePointConfigProvider.instance;
+        if (externalProvider?.isConfigured()) {
+            const externalAgentConfig = externalProvider.getAgentConfig(agentId);
+            if (externalAgentConfig) {
+                return externalAgentConfig;
+            }
+            // No agent-specific entry in SharePoint – return master config
+            // so that the logs correctly reflect the agent's fallback access.
+            const masterPatterns = externalProvider.getMasterServicePatterns();
+            if (masterPatterns && masterPatterns.length > 0) {
+                console.info(`ℹ️ Agent ${agentId} not explicitly defined in SharePoint. Falling back to SharePoint MASTER configuration.`);
+                config.servicePatterns = masterPatterns;
+            }
+            return config;
+        }
+
+        // ── Fallback: read from environment variables ────────────────────
         const upperAgentId = agentId.toUpperCase();
         const envKeys = Object.keys(process.env);
 
@@ -138,7 +159,7 @@ export class Config {
             } else if (upperKey.startsWith(`AS_${upperAgentId}_`) && upperKey.endsWith('_ENTITIES')) {
                 // e.g. AS_1234ABCD-1234-5678-1234-1234567890AB_YOUR_SERVICE_NAME_ENTITIES
                 const parts = upperKey.split('_');
-                // The service ID is everything between AS_<agentId>_ and _ENTITIES
+                // The service ID is everything between AS_<agentId> and _ENTITIES
                 // Length is at least 4: AS, <agentId>, SERVICE_ID..., ENTITIES
                 if (parts.length >= 4) {
                     const serviceId = parts.slice(2, parts.length - 1).join('_').toLowerCase();
@@ -187,10 +208,28 @@ export class Config {
      * Check if a service ID matches the configured patterns
      */
     isServiceAllowed(serviceId: string, agentConfig?: { servicePatterns: string[] }): boolean {
+        // Agent-specific check (already built from SharePoint/env at session creation)
         if (agentConfig && agentConfig.servicePatterns && agentConfig.servicePatterns.length > 0) {
             return this.matchesAnyPattern(serviceId, agentConfig.servicePatterns);
         }
 
+        // ── Global check: try external SharePoint master entry first ─────
+        const externalProvider = SharePointConfigProvider.instance;
+        if (externalProvider?.isConfigured()) {
+            const masterPatterns = externalProvider.getMasterServicePatterns();
+            if (masterPatterns && masterPatterns.length > 0 && masterPatterns[0] !== '*') {
+                // Apply exclusion patterns from .env (SharePoint doesn't manage these)
+                const exclusionPatterns = this.get('odata.exclusionPatterns', []);
+                if (this.matchesAnyPattern(serviceId, exclusionPatterns)) {
+                    return false;
+                }
+                return this.matchesAnyPattern(serviceId, masterPatterns);
+            }
+            // Master entry is wildcard ('*') or empty → allow all
+            return true;
+        }
+
+        // ── Fallback: .env-based check ───────────────────────────────────
         const allowAll = this.get('odata.allowAllServices', false);
         if (allowAll) {
             return true;
@@ -225,15 +264,20 @@ export class Config {
     /**
      * Check if a string matches a pattern
      * Supports:
-     * - Exact match
+     * - Exact match (case-insensitive)
+     * - Substring match: patterns WITHOUT glob characters (*, ?) are
+     *   automatically treated as substring matches (e.g. 'API_BUSINESS_PARTNER'
+     *   matches 'API_BUSINESS_PARTNER_0001'). This ensures SharePoint patterns
+     *   (entered without wildcards) work with SAP catalog IDs that carry
+     *   version suffixes like '_0001'.
      * - Glob patterns with * (matches any characters) and ? (matches single character)
      * - Regex patterns (if they start and end with /)
      */
-    private matchesPattern(value: string, pattern: string): boolean {
+    public matchesPattern(value: string, pattern: string): boolean {
         if (!pattern) return false;
 
-        // Exact match
-        if (pattern === value) return true;
+        // Exact match (case-insensitive)
+        if (pattern.toLowerCase() === value.toLowerCase()) return true;
 
         // Regex pattern (enclosed in forward slashes)
         if (pattern.startsWith('/') && pattern.endsWith('/')) {
@@ -244,6 +288,13 @@ export class Config {
                 console.warn(`Invalid regex pattern: ${pattern}`, error);
                 return false;
             }
+        }
+
+        // If pattern has NO glob characters, treat as substring / contains match
+        // e.g. 'API_BUSINESS_PARTNER' matches 'API_BUSINESS_PARTNER_0001'
+        const hasGlobChars = pattern.includes('*') || pattern.includes('?');
+        if (!hasGlobChars) {
+            return value.toLowerCase().includes(pattern.toLowerCase());
         }
 
         // Glob pattern - convert to regex

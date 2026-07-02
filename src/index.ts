@@ -15,6 +15,7 @@ import { SAPDiscoveryService } from './services/sap-discovery.js';
 import { ODataService } from './types/sap-types.js';
 import { ServiceDiscoveryConfigService } from './services/service-discovery-config.js';
 import { AuthService, AuthRequest } from './services/auth-service.js';
+import { SharePointConfigProvider } from './services/sharepoint-config-provider.js';
 
 // Global type extensions
 declare global {
@@ -103,6 +104,15 @@ async function getOrCreateSession(sessionId?: string, userToken?: string, agentI
     if (sessionId && sessions.has(sessionId)) {
         const session = sessions.get(sessionId)!;
         logger.debug(`♻️  Reusing existing session: ${sessionId}`);
+        
+        // CRITICAL FIX: Always update the user token for existing sessions!
+        // Otherwise, if the token expires, the session will continue using the old expired token forever.
+        if (userToken) {
+            session.userToken = userToken;
+            session.server.setUserToken(userToken);
+            logger.debug(`🔄 Updated user token for existing session: ${sessionId}`);
+        }
+        
         return {
             sessionId,
             server: session.server,
@@ -1198,11 +1208,33 @@ export async function startServer(port: number = 3000): Promise<void> {
                 // Initialize destination service
                 await destinationService.initialize();
 
+                // Initialize external config from SharePoint (if configured)
+                await SharePointConfigProvider.initialize(logger);
+
                 // Discover SAP OData services
                 logger.info('🔍 Discovering SAP OData services...');
                 discoveredServices = await sapDiscoveryService.discoverAllServices();
 
                 logger.info(`✅ Discovered ${discoveredServices.length} OData services`);
+
+                // Listen for dynamic configuration changes from SharePoint
+                if (SharePointConfigProvider.instance) {
+                    SharePointConfigProvider.instance.on('configChanged', async () => {
+                        logger.info('🔄 SharePoint configuration changed. Triggering dynamic service discovery...');
+                        try {
+                            const newServices = await sapDiscoveryService.discoverAllServices();
+                            
+                            // Mutate the global array in-place so active MCPServer sessions
+                            // automatically see the new services without needing a restart.
+                            discoveredServices.length = 0;
+                            discoveredServices.push(...newServices);
+                            
+                            logger.info(`✅ Dynamic discovery complete. ${discoveredServices.length} services now available.`);
+                        } catch (error) {
+                            logger.error('❌ Failed to dynamically discover services after config change:', error);
+                        }
+                    });
+                }
                 resolve();
             });
 
@@ -1214,6 +1246,9 @@ export async function startServer(port: number = 3000): Promise<void> {
             // Graceful shutdown
             process.on('SIGTERM', () => {
                 logger.info('🛑 SIGTERM received, shutting down gracefully...');
+
+                // Stop SharePoint config polling
+                SharePointConfigProvider.instance?.stopPolling();
 
                 // Close all sessions
                 for (const [sessionId, session] of sessions.entries()) {

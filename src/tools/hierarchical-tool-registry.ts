@@ -59,6 +59,34 @@ export class HierarchicalSAPToolRegistry {
     }
 
     /**
+     * Helper to get capabilities for an entity, evaluating glob patterns
+     */
+    private getEntityCapabilities(serviceId: string, entityName: string): string[] | undefined {
+        if (!this.agentConfig) return undefined;
+        
+        // If we have capability rules from SharePoint, use them (first match wins)
+        if (this.agentConfig.capabilityRules && this.agentConfig.capabilityRules.length > 0) {
+            for (const rule of this.agentConfig.capabilityRules) {
+                if (this.configService.matchesPattern(serviceId, rule.servicePattern) &&
+                    this.configService.matchesPattern(entityName, rule.entityPattern)) {
+                    return rule.capabilities;
+                }
+            }
+        } else if (this.agentConfig.flatCapabilities) {
+            // Fallback to older flatCapabilities logic
+            const lookupKey = `as_${this.agentId}_${serviceId}_${entityName}_capability`.toLowerCase();
+            let caps = this.agentConfig.flatCapabilities[lookupKey];
+            if (!caps) {
+                const wildcardKey = `as_${this.agentId}_${serviceId}_*_capability`.toLowerCase();
+                caps = this.agentConfig.flatCapabilities[wildcardKey];
+            }
+            return caps;
+        }
+        
+        return undefined;
+    }
+
+    /**
      * Register the 3-level progressive discovery tools instead of 200+ individual CRUD tools
      */
     public async registerDiscoveryTools(): Promise<void> {
@@ -371,8 +399,7 @@ export class HierarchicalSAPToolRegistry {
                     let canDelete = entityType.deletable;
 
                     if (this.agentId) {
-                         const lookupKey = `as_${this.agentId}_${service.id}_${entityType.name}_capability`.toLowerCase();
-                         const caps = this.agentConfig.flatCapabilities[lookupKey];
+                         const caps = this.getEntityCapabilities(service.id, entityType.name);
                          if (caps) {
                              canRead = caps.includes('read');
                              canCreate = caps.includes('create');
@@ -615,8 +642,7 @@ export class HierarchicalSAPToolRegistry {
                     let canDelete = entity.deletable;
 
                     if (this.agentId) {
-                         const lookupKey = `as_${this.agentId}_${service.id}_${entity.name}_capability`.toLowerCase();
-                         const caps = this.agentConfig.flatCapabilities[lookupKey];
+                         const caps = this.getEntityCapabilities(service.id, entity.name);
                          if (caps) {
                              canRead = caps.includes('read');
                              canCreate = caps.includes('create');
@@ -719,8 +745,7 @@ export class HierarchicalSAPToolRegistry {
                                     let canDelete = entity.deletable;
 
                                     if (this.agentId) {
-                                         const lookupKey = `as_${this.agentId}_${service.id}_${entity.name}_capability`.toLowerCase();
-                                         const caps = this.agentConfig.flatCapabilities[lookupKey];
+                                         const caps = this.getEntityCapabilities(service.id, entity.name);
                                          if (caps) {
                                              canRead = caps.includes('read');
                                              canCreate = caps.includes('create');
@@ -1311,8 +1336,7 @@ export class HierarchicalSAPToolRegistry {
             let canDelete = entityType.deletable;
 
             if (this.agentId) {
-                 const lookupKey = `as_${this.agentId}_${service.id}_${entityType.name}_capability`.toLowerCase();
-                 const caps = this.agentConfig.flatCapabilities[lookupKey];
+                 const caps = this.getEntityCapabilities(service.id, entityType.name);
                  if (caps) {
                      canRead = caps.includes('read');
                      canCreate = caps.includes('create');
