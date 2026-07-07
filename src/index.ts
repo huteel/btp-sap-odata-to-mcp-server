@@ -28,6 +28,28 @@ declare global {
     }>;
 }
 
+// --- 1. INITIAL CONFIGURATION CHECK ---
+// Server stops IMMEDIATELY on startup if no key is defined in the .env file
+const EXPECTED_API_KEY = process.env.MY_APP_API_KEY;
+
+if (!EXPECTED_API_KEY) {
+    console.error("⛔ FATAL ERROR: MY_APP_API_KEY is not configured in the environment (e.g., .env or prod.env)!");
+    console.error("Server is shutting down before reading SAP metadata.");
+    process.exit(1); 
+}
+// ----------------------------------------------
+
+// Global type extensions
+declare global {
+    var mcpProxyStates: Map<string, {
+        mcpRedirectUri: string;
+        state: string;
+        mcpCodeChallenge?: string;
+        mcpCodeChallengeMethod?: string;
+        timestamp: number;
+    }>;
+}
+
 // Helper function to get the correct base URL from request
 function getBaseUrl(req: express.Request): string {
     const protocol = req.get('x-forwarded-proto') || req.protocol;
@@ -200,6 +222,37 @@ export function createApp(): express.Application {
     app.use(express.json({ limit: '10mb' }));
     app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
+    // --- 🔒 2. API-KEY MIDDLEWARE ---
+    app.use((req, res, next) => {
+        // These paths MUST remain public to prevent BTP and Microsoft from crashing
+        const publicPaths = ['/health'];
+        
+        // Exempt all OAuth routes (authorize, token, callback, refresh) and discovery
+        if (publicPaths.includes(req.path) || req.path.startsWith('/.well-known/') || req.path.startsWith('/oauth/callback')) {
+            return next();
+        }
+
+        // FOR EVERYTHING ELSE (MCP Data) the key is MANDATORY!
+        let providedKey = req.query['x-api-key'] as string | undefined;
+
+        // Microsoft Power Platform / Copilot Studio Bug Fix:
+        // Strip trailing parameters if the platform incorrectly appends them without an ampersand (e.g., KEY?client_id=...)
+        if (providedKey && providedKey.includes('?')) {
+            providedKey = providedKey.split('?')[0];
+        }
+
+        if (!providedKey || providedKey !== process.env.MY_APP_API_KEY) {
+            logger.warn(`🚫 Access denied for ${req.path} - Invalid or missing x-api-key`);
+            return res.status(401).json({ 
+                error: "Unauthorized", 
+                message: "Invalid or missing x-api-key query parameter" 
+            });
+        }
+        
+        next();
+    });
+    // ----------------------------------------------------
+
     // Request logging middleware
     app.use((req, res, next) => {
         logger.debug(`📨 ${req.method} ${req.path}`, {
@@ -224,6 +277,10 @@ export function createApp(): express.Application {
         const authReq = req as AuthRequest;
         const isAuthenticated = !!authReq.authInfo;
         const baseUrl = getBaseUrl(req);
+        
+        // Füge den API Key Parameter für die internen Guidance-URLs hinzu
+        const apiKeyParam = `?x-api-key=${process.env.MY_APP_API_KEY}`;
+
         // Build authentication-aware response
         const serverInfo = {
             name: 'btp-sap-odata-to-mcp-server',
@@ -262,13 +319,13 @@ export function createApp(): express.Application {
                 } : {
                     message: 'Authentication required to access SAP OData services',
                     instructions: {
-                        step1: `Visit ${baseUrl}/oauth/authorize to start OAuth flow`,
+                        step1: `Visit ${baseUrl}/oauth/authorize${apiKeyParam} to start OAuth flow`,
                         step2: 'Login with SAP BTP credentials',
                         step3: 'Copy access token from callback',
                         step4: 'Use token in Authorization header for MCP requests'
                     },
                     endpoints: {
-                        authorize: `${baseUrl}/oauth/authorize`,
+                        authorize: `${baseUrl}/oauth/authorize${apiKeyParam}`,
                         discovery: `${baseUrl}/.well-known/oauth-authorization-server`
                     }
                 })
@@ -298,8 +355,8 @@ export function createApp(): express.Application {
             },
             endpoints: {
                 health: '/health',
-                mcp: '/mcp',
-                auth: '/oauth/authorize',
+                mcp: `/mcp${apiKeyParam}`,
+                auth: `/oauth/authorize${apiKeyParam}`,
                 userinfo: '/oauth/userinfo',
                 docs: '/docs'
             },
@@ -337,6 +394,16 @@ export function createApp(): express.Application {
     app.post('/mcp', authService.authenticateJWT() as express.RequestHandler, async (req, res) => {
         const authReq = req as AuthRequest;
         try {
+            // Copilot Studio fix: ensure text/event-stream is present in Accept header since StreamableHTTPServerTransport demands it.
+            if (!req.headers.accept) {
+                req.headers.accept = "application/json, text/event-stream";
+            } else if (!req.headers.accept.includes("text/event-stream")) {
+                req.headers.accept = `${req.headers.accept}, text/event-stream`;
+            }
+            if (!req.headers.accept.includes("application/json")) {
+                req.headers.accept = `application/json, ${req.headers.accept}`;
+            }
+
             // Get session ID from header
             const sessionId = authReq.headers['mcp-session-id'] as string | undefined;
             let session;
