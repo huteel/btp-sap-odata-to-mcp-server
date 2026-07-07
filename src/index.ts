@@ -1290,13 +1290,22 @@ export async function startServer(port: number = 3000): Promise<void> {
                         logger.info('🔄 SharePoint configuration changed. Triggering dynamic service discovery...');
                         try {
                             const newServices = await sapDiscoveryService.discoverAllServices();
-                            
-                            // Mutate the global array in-place so active MCPServer sessions
-                            // automatically see the new services without needing a restart.
-                            discoveredServices.length = 0;
-                            discoveredServices.push(...newServices);
-                            
-                            logger.info(`✅ Dynamic discovery complete. ${discoveredServices.length} services now available.`);
+
+                            // Guard against wiping the catalog: discoverAllServices() swallows
+                            // transient failures (e.g. destination/token/gateway errors) and
+                            // returns an empty array instead of throwing. Blindly replacing the
+                            // global list would then empty it in-place for ALL active and future
+                            // sessions until the next restart. Only replace on a non-empty result.
+                            if (newServices.length > 0) {
+                                // Mutate the global array in-place so active MCPServer sessions
+                                // automatically see the new services without needing a restart.
+                                discoveredServices.length = 0;
+                                discoveredServices.push(...newServices);
+
+                                logger.info(`✅ Dynamic discovery complete. ${discoveredServices.length} services now available.`);
+                            } else {
+                                logger.warn(`⚠️ Dynamic re-discovery returned 0 services — keeping previous ${discoveredServices.length} service(s) to avoid emptying the catalog. Likely a transient SAP/destination/token issue.`);
+                            }
                         } catch (error) {
                             logger.error('❌ Failed to dynamically discover services after config change:', error);
                         }
